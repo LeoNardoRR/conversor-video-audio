@@ -1,25 +1,36 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import ipaddress
 import json
 import os
+import re
 import shutil
+import socket
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
+from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
-from urllib.parse import unquote
+from typing import Any, Literal
+from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, build_opener, urlopen
+from urllib.request import Request as UrlRequest
 
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response
-
+from pydantic import BaseModel, Field
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data/jobs"))
 MAX_UPLOAD_BYTES = int(float(os.getenv("MAX_UPLOAD_GB", "12")) * 1024**3)
 MIN_FREE_BYTES = int(float(os.getenv("MIN_FREE_GB", "5")) * 1024**3)
 RETENTION_SECONDS = int(float(os.getenv("RETENTION_HOURS", "24")) * 3600)
 MAX_CONCURRENT_JOBS = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "1")))
+AUDIT_DIR = Path(os.getenv("AUDIT_DIR", str(DATA_DIR.parent / "audit")))
+BRAVE_SEARCH_API_KEY = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
+RESEARCH_RATE_LIMIT = max(1, int(os.getenv("RESEARCH_RATE_LIMIT", "30")))
 
 ALLOWED_EXTENSIONS = {"mp4", "mov", "avi", "mkv", "webm", "m4v", "mpeg", "mpg"}
 ALLOWED_BITRATES = {128, 192, 256, 320}
@@ -33,6 +44,97 @@ FORMAT_CONFIG = {
 jobs: dict[str, dict[str, Any]] = {}
 conversion_slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 background_tasks: set[asyncio.Task[Any]] = set()
+research_requests: dict[str, list[int]] = {}
+
+ALLOWED_RESEARCH_PURPOSES = {
+    "Qualificação de lead B2B recebido",
+    "Preparação de atendimento solicitado",
+    "Atualização cadastral de cliente",
+    "Prevenção de duplicidade no CRM",
+}
+PERSONAL_EMAIL_DOMAINS = {
+    "gmail.com",
+    "hotmail.com",
+    "outlook.com",
+    "live.com",
+    "icloud.com",
+    "yahoo.com",
+    "yahoo.com.br",
+    "bol.com.br",
+    "uol.com.br",
+    "proton.me",
+    "protonmail.com",
+}
+BLOCKED_RESULT_DOMAINS = {
+    "spokeo.com",
+    "truepeoplesearch.com",
+    "beenverified.com",
+    "peoplefinder.com",
+    "escavador.com",
+}
+
+
+class LeadResearchRequest(BaseModel):
+    query: str = Field(min_length=3, max_length=200)
+    query_type: Literal["lead", "cnpj", "domain", "company"]
+    purpose: str = Field(min_length=5, max_length=120)
+    justification: str = Field(min_length=10, max_length=300)
+    authorized: bool
+
+
+class WebsiteParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title = ""
+        self.description = ""
+        self.links: list[str] = []
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {key.lower(): value or "" for key, value in attrs}
+        if tag.lower() == "title":
+            self._in_title = True
+        if tag.lower() == "meta":
+            name = (attributes.get("name") or attributes.get("property") or "").lower()
+            if name in {"description", "og:description"} and not self.description:
+                self.description = attributes.get("content", "").strip()
+        if tag.lower() == "a" and attributes.get("href"):
+            self.links.append(attributes["href"].strip())
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
+
+
+def ensure_public_hostname(hostname: str) -> None:
+    normalized = hostname.lower().rstrip(".")
+    if not normalized or normalized == "localhost" or "." not in normalized:
+        raise ValueError("O domínio informado não é público.")
+    try:
+        addresses = socket.getaddrinfo(normalized, 443, type=socket.SOCK_STREAM)
+    except socket.gaierror as error:
+        raise ValueError("O domínio não pôde ser encontrado.") from error
+    if not addresses:
+        raise ValueError("O domínio não pôde ser encontrado.")
+    for address in addresses:
+        ip = ipaddress.ip_address(address[4][0])
+        if not ip.is_global:
+            raise ValueError(
+                "Endereços internos ou reservados não podem ser consultados."
+            )
+
+
+class SafeRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        parsed = urlparse(newurl)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise HTTPError(newurl, code, "Redirecionamento não permitido", headers, fp)
+        ensure_public_hostname(parsed.hostname)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def now() -> int:
@@ -44,6 +146,268 @@ def safe_name(filename: str) -> str:
         char for char in filename if char.isalnum() or char in " ._-()"
     ).strip()
     return cleaned[:180] or "video"
+
+
+def clean_text(value: Any, limit: int = 500) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()[:limit]
+
+
+def format_cnpj(digits: str) -> str:
+    return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
+
+
+def format_phone(value: Any) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) == 10:
+        return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
+    if len(digits) == 11:
+        return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
+    return ""
+
+
+def valid_cnpj(digits: str) -> bool:
+    if len(digits) != 14 or len(set(digits)) == 1:
+        return False
+
+    def check_digit(base: str, weights: list[int]) -> str:
+        total = sum(int(number) * weight for number, weight in zip(base, weights))
+        remainder = total % 11
+        return "0" if remainder < 2 else str(11 - remainder)
+
+    first = check_digit(digits[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    second = check_digit(digits[:12] + first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    return digits[-2:] == first + second
+
+
+def normalize_domain(raw_value: str) -> str:
+    value = raw_value.strip().lower()
+    if "@" in value:
+        local, _, domain = value.rpartition("@")
+        if not local or domain in PERSONAL_EMAIL_DOMAINS:
+            raise ValueError(
+                "E-mails pessoais não podem ser usados para enriquecimento."
+            )
+        value = domain
+    if "://" not in value:
+        value = f"https://{value}"
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Informe um domínio empresarial válido.")
+    hostname = parsed.hostname.encode("idna").decode("ascii").lower()
+    if len(hostname) > 253 or not re.fullmatch(r"[a-z0-9.-]+", hostname):
+        raise ValueError("Informe um domínio empresarial válido.")
+    return hostname
+
+
+def blocks_personal_lookup(value: str, query_type: str) -> bool:
+    compact_digits = re.sub(r"\D", "", value)
+    if query_type == "cnpj":
+        return False
+    if "@" in value or re.search(r"\bcpf\b", value, flags=re.IGNORECASE):
+        return True
+    return 10 <= len(compact_digits) <= 13
+
+
+def detect_lead_query_type(value: str) -> str:
+    """Classify a card value without treating a personal identifier as a search key."""
+    digits = re.sub(r"\D", "", value)
+    if len(digits) == 14 and valid_cnpj(digits):
+        return "cnpj"
+    candidate = value.strip().lower()
+    if "@" in candidate:
+        return "domain"
+    if " " not in candidate and re.fullmatch(
+        r"(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s]*)?", candidate
+    ):
+        return "domain"
+    return "company"
+
+
+def external_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+    request_headers = {
+        "Accept": "application/json",
+        "User-Agent": "KomandaF5-LeadIntel/1.0",
+        **(headers or {}),
+    }
+    request = UrlRequest(url, headers=request_headers)
+    with urlopen(request, timeout=12) as response:
+        body = response.read(2 * 1024 * 1024 + 1)
+        if len(body) > 2 * 1024 * 1024:
+            raise ValueError("O provedor retornou uma resposta maior que o permitido.")
+        return json.loads(body.decode("utf-8"))
+
+
+def fetch_cnpj(cnpj_digits: str) -> tuple[dict[str, Any], str]:
+    source_url = f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_digits}"
+    payload = external_json(source_url)
+    street_type = clean_text(payload.get("descricao_tipo_de_logradouro"), 40)
+    street = clean_text(payload.get("logradouro"), 120)
+    number = clean_text(payload.get("numero"), 30)
+    district = clean_text(payload.get("bairro"), 80)
+    address = ", ".join(
+        filter(None, [" ".join(filter(None, [street_type, street])), number, district])
+    )
+    secondary = [
+        clean_text(item.get("descricao"), 120)
+        for item in payload.get("cnaes_secundarios", [])[:8]
+        if isinstance(item, dict) and item.get("descricao")
+    ]
+    partners = []
+    for item in payload.get("qsa", [])[:20]:
+        if not isinstance(item, dict) or not item.get("nome_socio"):
+            continue
+        partners.append(
+            {
+                "name": clean_text(item.get("nome_socio"), 180),
+                "role": clean_text(item.get("qualificacao_socio"), 120),
+                "joined_at": clean_text(item.get("data_entrada_sociedade"), 30),
+                "entity_type": {
+                    1: "Pessoa jurídica",
+                    2: "Pessoa física",
+                    3: "Estrangeiro",
+                }.get(item.get("identificador_de_socio"), "Não informado"),
+            }
+        )
+    company = {
+        "legal_name": clean_text(payload.get("razao_social"), 180),
+        "trade_name": clean_text(payload.get("nome_fantasia"), 180),
+        "cnpj": format_cnpj(cnpj_digits),
+        "registration_status": clean_text(
+            payload.get("descricao_situacao_cadastral"), 80
+        ),
+        "opened_at": clean_text(payload.get("data_inicio_atividade"), 30),
+        "size": clean_text(payload.get("descricao_porte") or payload.get("porte"), 80),
+        "primary_activity": clean_text(payload.get("cnae_fiscal_descricao"), 180),
+        "secondary_activities": secondary,
+        "address": address,
+        "city": clean_text(payload.get("municipio"), 100),
+        "state": clean_text(payload.get("uf"), 2),
+        "postal_code": clean_text(payload.get("cep"), 12),
+        "legal_nature": clean_text(payload.get("natureza_juridica"), 120),
+        "capital_social": payload.get("capital_social") or 0,
+        "branch_type": clean_text(payload.get("descricao_identificador_matriz_filial"), 30),
+        "business_email": clean_text(payload.get("email"), 180),
+        "business_phone_1": format_phone(payload.get("ddd_telefone_1")),
+        "business_phone_2": format_phone(payload.get("ddd_telefone_2")),
+        "partners": partners,
+    }
+    return {key: value for key, value in company.items() if value}, source_url
+
+
+def fetch_website(domain: str) -> dict[str, Any]:
+    ensure_public_hostname(domain)
+    url = f"https://{domain}/"
+    opener = build_opener(SafeRedirectHandler())
+    request = UrlRequest(
+        url,
+        headers={
+            "Accept": "text/html,application/xhtml+xml",
+            "User-Agent": "Mozilla/5.0 (compatible; KomandaF5-LeadIntel/1.0)",
+        },
+    )
+    with opener.open(request, timeout=10) as response:
+        content_type = response.headers.get_content_type()
+        if content_type not in {"text/html", "application/xhtml+xml"}:
+            raise ValueError("O domínio não retornou uma página HTML.")
+        body = response.read(768 * 1024 + 1)
+        if len(body) > 768 * 1024:
+            raise ValueError("A página é grande demais para a leitura segura.")
+        final_url = response.geturl()
+        encoding = response.headers.get_content_charset() or "utf-8"
+
+    parser = WebsiteParser()
+    parser.feed(body.decode(encoding, errors="replace"))
+    social_domains = {
+        "linkedin.com": "LinkedIn",
+        "instagram.com": "Instagram",
+        "facebook.com": "Facebook",
+        "youtube.com": "YouTube",
+        "youtu.be": "YouTube",
+    }
+    social_links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for link in parser.links:
+        absolute = urljoin(final_url, link)
+        parsed = urlparse(absolute)
+        host = (parsed.hostname or "").lower().removeprefix("www.")
+        label = next(
+            (
+                name
+                for social, name in social_domains.items()
+                if host == social or host.endswith(f".{social}")
+            ),
+            "",
+        )
+        if not label or absolute in seen:
+            continue
+        if "linkedin.com" in host and "/in/" in parsed.path.lower():
+            continue
+        seen.add(absolute)
+        social_links.append({"label": label, "url": absolute[:500]})
+        if len(social_links) == 6:
+            break
+    return {
+        "url": final_url[:500],
+        "title": clean_text(parser.title, 180),
+        "description": clean_text(parser.description, 400),
+        "social_links": social_links,
+    }
+
+
+def brave_search(query: str) -> list[dict[str, str]]:
+    from urllib.parse import urlencode
+
+    url = "https://api.search.brave.com/res/v1/web/search?" + urlencode(
+        {"q": query[:300], "count": 8, "country": "BR", "search_lang": "pt-br"}
+    )
+    payload = external_json(url, {"X-Subscription-Token": BRAVE_SEARCH_API_KEY})
+    results: list[dict[str, str]] = []
+    for item in (payload.get("web") or {}).get("results", []):
+        item_url = clean_text(item.get("url"), 500)
+        parsed = urlparse(item_url)
+        domain = (parsed.hostname or "").lower().removeprefix("www.")
+        if not item_url or not domain or domain in BLOCKED_RESULT_DOMAINS:
+            continue
+        if domain.endswith("linkedin.com") and "/in/" in parsed.path.lower():
+            continue
+        results.append(
+            {
+                "title": clean_text(item.get("title"), 180),
+                "url": item_url,
+                "description": clean_text(item.get("description"), 350),
+                "domain": domain,
+            }
+        )
+        if len(results) == 6:
+            break
+    return results
+
+
+def check_research_rate(client_key: str) -> None:
+    current = now()
+    window_start = current - 600
+    recent = [
+        timestamp
+        for timestamp in research_requests.get(client_key, [])
+        if timestamp >= window_start
+    ]
+    if len(recent) >= RESEARCH_RATE_LIMIT:
+        raise HTTPException(
+            429, "Limite temporário de pesquisas atingido. Aguarde alguns minutos."
+        )
+    recent.append(current)
+    research_requests[client_key] = recent
+
+
+def audit_research(record: dict[str, Any]) -> None:
+    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
+    path = AUDIT_DIR / "lead-research.jsonl"
+    with path.open("a", encoding="utf-8") as audit_file:
+        audit_file.write(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        )
 
 
 def public_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -230,6 +594,235 @@ async def health() -> dict[str, Any]:
             for job in jobs.values()
         ),
         "max_upload_bytes": MAX_UPLOAD_BYTES,
+        "lead_intel": {
+            "status": "ok",
+            "cnpj_provider": "available",
+            "web_search": "available" if BRAVE_SEARCH_API_KEY else "unconfigured",
+        },
+    }
+
+
+@app.post("/api/leads/research")
+async def research_lead(
+    payload: LeadResearchRequest, request: Request
+) -> dict[str, Any]:
+    if not payload.authorized:
+        raise HTTPException(
+            400, "Confirme a finalidade profissional legítima da pesquisa."
+        )
+    if payload.purpose not in ALLOWED_RESEARCH_PURPOSES:
+        raise HTTPException(400, "Finalidade de pesquisa não permitida.")
+
+    query = clean_text(payload.query, 200)
+    effective_type = (
+        detect_lead_query_type(query) if payload.query_type == "lead" else payload.query_type
+    )
+    if blocks_personal_lookup(query, effective_type):
+        raise HTTPException(
+            400,
+            "Para proteger o titular, esta versão aceita somente identificadores empresariais: e-mail pessoal, telefone isolado e CPF não são permitidos. Use nome + empresa/cidade, CNPJ ou domínio corporativo.",
+        )
+
+    client_address = request.client.host if request.client else "unknown"
+    client_key = hashlib.sha256(client_address.encode()).hexdigest()[:20]
+    check_research_rate(client_key)
+
+    research_id = uuid.uuid4().hex
+    searched_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    company: dict[str, Any] | None = None
+    website: dict[str, Any] | None = None
+    web_results: list[dict[str, str]] = []
+    sources: list[dict[str, str]] = []
+    providers: list[dict[str, str]] = []
+    warnings = [
+        "Confirme os dados na fonte antes de atualizar o CRM.",
+        "O resultado deve ser usado somente para a finalidade profissional declarada.",
+    ]
+    search_terms = query
+
+    if effective_type == "cnpj":
+        cnpj_digits = re.sub(r"\D", "", query)
+        if not valid_cnpj(cnpj_digits):
+            raise HTTPException(400, "Informe um CNPJ válido com 14 dígitos.")
+        try:
+            company, source_url = await asyncio.to_thread(fetch_cnpj, cnpj_digits)
+            providers.append(
+                {
+                    "name": "BrasilAPI / Minha Receita",
+                    "status": "ok",
+                    "detail": "Cadastro empresarial localizado.",
+                }
+            )
+            sources.append(
+                {
+                    "title": "Cadastro público de CNPJ",
+                    "url": source_url,
+                    "provider": "BrasilAPI",
+                    "checked_at": searched_at,
+                }
+            )
+            search_terms = " ".join(
+                filter(
+                    None,
+                    [
+                        company.get("legal_name", ""),
+                        company.get("trade_name", ""),
+                        company.get("city", ""),
+                        "site oficial",
+                    ],
+                )
+            )
+        except HTTPError as error:
+            if error.code == 404:
+                providers.append(
+                    {
+                        "name": "BrasilAPI / Minha Receita",
+                        "status": "not_found",
+                        "detail": "CNPJ não localizado no provedor.",
+                    }
+                )
+                warnings.append(
+                    "O CNPJ não foi localizado na fonte cadastral consultada."
+                )
+            else:
+                providers.append(
+                    {
+                        "name": "BrasilAPI / Minha Receita",
+                        "status": "error",
+                        "detail": "Provedor indisponível no momento.",
+                    }
+                )
+                warnings.append(
+                    "A consulta cadastral ficou indisponível; tente novamente mais tarde."
+                )
+        except (URLError, TimeoutError, ValueError, json.JSONDecodeError):
+            providers.append(
+                {
+                    "name": "BrasilAPI / Minha Receita",
+                    "status": "error",
+                    "detail": "Falha temporária ao consultar o cadastro.",
+                }
+            )
+            warnings.append(
+                "A consulta cadastral ficou indisponível; tente novamente mais tarde."
+            )
+
+    if effective_type == "domain":
+        try:
+            domain = normalize_domain(query)
+            website = await asyncio.to_thread(fetch_website, domain)
+            providers.append(
+                {
+                    "name": "Site informado",
+                    "status": "ok",
+                    "detail": "Página pública acessada com proteção contra endereços internos.",
+                }
+            )
+            sources.append(
+                {
+                    "title": website.get("title") or domain,
+                    "url": website["url"],
+                    "provider": "Site oficial informado",
+                    "checked_at": searched_at,
+                }
+            )
+            search_terms = f'"{domain}" empresa'
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except (HTTPError, URLError, TimeoutError, UnicodeError):
+            providers.append(
+                {
+                    "name": "Site informado",
+                    "status": "error",
+                    "detail": "Não foi possível acessar a página pública.",
+                }
+            )
+            warnings.append(
+                "O domínio foi reconhecido, mas o site não respondeu à leitura segura."
+            )
+
+    if effective_type == "company":
+        if len(re.findall(r"[A-Za-zÀ-ÿ]", query)) < 3:
+            raise HTTPException(
+                400, "Informe o nome empresarial e, se possível, a cidade."
+            )
+        search_terms = f'"{query}" empresa Brasil site oficial'
+
+    if BRAVE_SEARCH_API_KEY:
+        try:
+            web_results = await asyncio.to_thread(brave_search, search_terms)
+            providers.append(
+                {
+                    "name": "Brave Search API",
+                    "status": "ok" if web_results else "not_found",
+                    "detail": f"{len(web_results)} resultado(s) empresarial(is) selecionado(s)."
+                    if web_results
+                    else "Nenhum resultado público relevante foi encontrado.",
+                }
+            )
+            for item in web_results:
+                sources.append(
+                    {
+                        "title": item["title"] or item["domain"],
+                        "url": item["url"],
+                        "provider": "Brave Search",
+                        "checked_at": searched_at,
+                    }
+                )
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError):
+            providers.append(
+                {
+                    "name": "Brave Search API",
+                    "status": "error",
+                    "detail": "Pesquisa web indisponível no momento.",
+                }
+            )
+            warnings.append(
+                "A pesquisa web não respondeu. Os demais dados continuam válidos."
+            )
+    else:
+        providers.append(
+            {
+                "name": "Pesquisa web",
+                "status": "unconfigured",
+                "detail": "Configure BRAVE_SEARCH_API_KEY no servidor para pesquisar por nome.",
+            }
+        )
+        if effective_type == "company":
+            warnings.append(
+                "A pesquisa por nome precisa da chave do provedor web configurada na VPS."
+            )
+
+    audit_research(
+        {
+            "research_id": research_id,
+            "searched_at": searched_at,
+            "client_hash": client_key,
+            "query_type": payload.query_type,
+            "detected_type": effective_type,
+            "query_fingerprint": hashlib.sha256(query.casefold().encode()).hexdigest(),
+            "purpose": payload.purpose,
+            "justification_fingerprint": hashlib.sha256(
+                payload.justification.strip().encode()
+            ).hexdigest(),
+            "providers": [
+                {"name": item["name"], "status": item["status"]} for item in providers
+            ],
+            "source_count": len(sources),
+        }
+    )
+
+    return {
+        "research_id": research_id,
+        "searched_at": searched_at,
+        "query_type": payload.query_type,
+        "detected_type": effective_type,
+        "company": company,
+        "website": website,
+        "web_results": web_results,
+        "sources": sources,
+        "providers": providers,
+        "warnings": warnings,
     }
 
 

@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import './App.css'
+import LeadIntel from './LeadIntel'
 
 type AudioFormat = 'mp3' | 'wav' | 'm4a' | 'ogg'
 type AppStatus = 'idle' | 'ready' | 'uploading' | 'loading' | 'converting' | 'success' | 'error'
@@ -30,6 +31,7 @@ type ServerJob = {
   output_size?: number
   download_url?: string
 }
+type ActiveTool = 'converter' | 'lead-intel'
 
 const serverMode = import.meta.env.VITE_CONVERSION_MODE === 'server'
 const serverMaxUploadGb = import.meta.env.VITE_MAX_UPLOAD_GB || '12'
@@ -83,6 +85,9 @@ function App() {
   const [error, setError] = useState('')
   const [result, setResult] = useState<ConversionResult | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [activeTool, setActiveTool] = useState<ActiveTool>(() =>
+    window.location.hash === '#lead-intel' ? 'lead-intel' : 'converter',
+  )
 
   const busy = status === 'uploading' || status === 'loading' || status === 'converting'
   const selectedBitrate = useMemo(
@@ -103,6 +108,20 @@ function App() {
   }, [result])
 
   useEffect(() => () => uploadRef.current?.abort(), [])
+
+  useEffect(() => {
+    const onHashChange = () => setActiveTool(
+      window.location.hash === '#lead-intel' ? 'lead-intel' : 'converter',
+    )
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  function changeTool(tool: ActiveTool) {
+    window.location.hash = tool === 'lead-intel' ? 'lead-intel' : 'top'
+    setActiveTool(tool)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   function resetResult() {
     if (result?.url && !result.remote) URL.revokeObjectURL(result.url)
@@ -280,10 +299,14 @@ function App() {
         <a className="brand" href="#top" aria-label="Komanda F5 — início">
           <img src="./komanda-f5-logo.svg" alt="Komanda F5" />
         </a>
-        <div className="tool-label"><span>F5</span> Tools</div>
-        <div className="privacy-note"><LockKeyhole size={15} /> {serverMode ? 'Processamento na VPS' : 'Processamento privado'}</div>
+        <div className="tool-switch" aria-label="Ferramentas Komanda F5">
+          <button type="button" className={activeTool === 'converter' ? 'active' : ''} onClick={() => changeTool('converter')}>Conversor</button>
+          <button type="button" className={activeTool === 'lead-intel' ? 'active' : ''} onClick={() => changeTool('lead-intel')}>Lead Intel</button>
+        </div>
+        <div className="privacy-note"><LockKeyhole size={15} /> {activeTool === 'lead-intel' ? 'Pesquisa empresarial auditada' : serverMode ? 'Processamento na VPS' : 'Processamento privado'}</div>
       </nav>
 
+      {activeTool === 'converter' ? <>
       <section className={`hero ${file ? 'hero-compact' : ''}`} id="top">
         <div className="hero-copy">
           <div className="eyebrow"><span /> Uma ferramenta Komanda F5</div>
@@ -429,6 +452,8 @@ function App() {
           </div>
         )}
       </section>
+
+      </> : <LeadIntel />}
 
       <footer><img src="./komanda-f5-logo.svg" alt="Komanda F5" /><span>Feito para simplificar o seu trabalho.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
     </main>

@@ -2,6 +2,8 @@
 
 Ferramenta com identidade visual Komanda F5 que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
 
+O mesmo portal também inclui o **F5 Lead Intel**, uma pesquisa empresarial com salvaguardas de privacidade e fontes rastreáveis.
+
 ## Rodar no computador
 
 Requisitos: Node.js 20 ou superior.
@@ -45,3 +47,32 @@ O projeto inclui uma implantação Docker separada para processar vídeos grande
 - proteção inicial por usuário e senha.
 
 Veja o roteiro completo em [`DEPLOY_VPS.md`](./DEPLOY_VPS.md).
+
+## F5 Lead Intel
+
+Abra a ferramenta **Lead Intel** na navegação superior ou use `#lead-intel` no final do endereço.
+
+O MVP permite:
+
+- colar o dado disponível no card do Kommo e deixar a ferramenta identificar automaticamente se é CNPJ, domínio/e-mail corporativo ou nome/contexto;
+- consultar cadastro empresarial por CNPJ via BrasilAPI/Minha Receita;
+- exibir natureza jurídica, capital social, matriz/filial, telefones comerciais, e-mail cadastral e quadro societário quando a fonte retornar esses campos;
+- ler título, descrição e canais empresariais publicados no domínio informado;
+- pesquisar o nome, empresa, cidade ou contexto do lead na web quando `BRAVE_SEARCH_API_KEY` estiver configurada;
+- visualizar a fonte e a data de cada consulta;
+- declarar finalidade e justificativa antes da pesquisa;
+- manter auditoria minimizada: o log grava hashes, finalidade, provedores e contagens, nunca a consulta ou justificativa em texto aberto;
+- bloquear CPF, telefone, e-mail pessoal, dados sensíveis e endereços internos.
+
+O recurso é apoio à pesquisa B2B e não garante conformidade jurídica por si só. A empresa deve definir base legal, aviso de privacidade, retenção, canal do titular, perfis de acesso e revisão periódica com seu responsável por privacidade.
+
+### Pesquisa web opcional
+
+Crie uma chave no painel oficial do Brave Search e configure apenas no backend:
+
+```dotenv
+BRAVE_SEARCH_API_KEY=valor_no_cofre_de_segredos
+RESEARCH_RATE_LIMIT=30
+```
+
+Sem essa chave, CNPJ e domínio continuam disponíveis. A pesquisa ampla por nome mostra que o provedor ainda não foi configurado.

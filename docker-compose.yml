@@ -9,6 +9,9 @@ services:
       MIN_FREE_GB: ${MIN_FREE_GB:-5}
       RETENTION_HOURS: ${RETENTION_HOURS:-6}
       MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-1}
+      AUDIT_DIR: /data/audit
+      RESEARCH_RATE_LIMIT: ${RESEARCH_RATE_LIMIT:-30}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
     volumes:
       - converter_data:/data
     healthcheck:
