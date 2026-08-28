@@ -1,0 +1,21 @@
+{$SITE_ADDRESS} {
+    encode zstd gzip
+
+    basic_auth {
+        {$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+    }
+
+    root * /srv
+
+    route {
+        reverse_proxy /api/* backend:8000
+        try_files {path} /index.html
+        file_server
+    }
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+    }
+}

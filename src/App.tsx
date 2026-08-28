@@ -19,7 +19,21 @@ import {
 import './App.css'
 
 type AudioFormat = 'mp3' | 'wav' | 'm4a' | 'ogg'
-type AppStatus = 'idle' | 'ready' | 'loading' | 'converting' | 'success' | 'error'
+type AppStatus = 'idle' | 'ready' | 'uploading' | 'loading' | 'converting' | 'success' | 'error'
+type ConversionResult = { url: string; name: string; size: number; remote?: boolean }
+type ServerJob = {
+  id: string
+  status: 'uploading' | 'queued' | 'converting' | 'ready' | 'error'
+  progress: number
+  error?: string
+  output_name?: string
+  output_size?: number
+  download_url?: string
+}
+
+const serverMode = import.meta.env.VITE_CONVERSION_MODE === 'server'
+const serverMaxUploadGb = import.meta.env.VITE_MAX_UPLOAD_GB || '12'
+const serverRetentionHours = import.meta.env.VITE_RETENTION_HOURS || '6'
 
 const formats: { value: AudioFormat; label: string; description: string }[] = [
   { value: 'mp3', label: 'MP3', description: 'Compatível e leve' },
@@ -58,6 +72,7 @@ function safeBaseName(name: string) {
 function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const ffmpegRef = useRef<FFmpeg | null>(null)
+  const uploadRef = useRef<XMLHttpRequest | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [videoUrl, setVideoUrl] = useState('')
   const [duration, setDuration] = useState(0)
@@ -66,10 +81,10 @@ function App() {
   const [status, setStatus] = useState<AppStatus>('idle')
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
-  const [result, setResult] = useState<{ url: string; name: string; size: number } | null>(null)
+  const [result, setResult] = useState<ConversionResult | null>(null)
   const [dragging, setDragging] = useState(false)
 
-  const busy = status === 'loading' || status === 'converting'
+  const busy = status === 'uploading' || status === 'loading' || status === 'converting'
   const selectedBitrate = useMemo(
     () => bitrateOptions.find((option) => option.value === bitrate),
     [bitrate],
@@ -78,12 +93,19 @@ function App() {
   useEffect(() => {
     return () => {
       if (videoUrl) URL.revokeObjectURL(videoUrl)
-      if (result?.url) URL.revokeObjectURL(result.url)
     }
-  }, [videoUrl, result])
+  }, [videoUrl])
+
+  useEffect(() => {
+    return () => {
+      if (result?.url && !result.remote) URL.revokeObjectURL(result.url)
+    }
+  }, [result])
+
+  useEffect(() => () => uploadRef.current?.abort(), [])
 
   function resetResult() {
-    if (result?.url) URL.revokeObjectURL(result.url)
+    if (result?.url && !result.remote) URL.revokeObjectURL(result.url)
     setResult(null)
     setProgress(0)
   }
@@ -137,6 +159,67 @@ function App() {
     return ffmpegRef.current
   }
 
+  function uploadToServer(video: File) {
+    return new Promise<ServerJob>((resolve, reject) => {
+      const request = new XMLHttpRequest()
+      uploadRef.current = request
+      const query = new URLSearchParams({ format, bitrate: String(bitrate) })
+      request.open('POST', `/api/jobs?${query}`)
+      request.responseType = 'json'
+      request.setRequestHeader('Content-Type', video.type || 'application/octet-stream')
+      request.setRequestHeader('X-Filename', encodeURIComponent(video.name))
+      request.upload.onprogress = (event) => {
+        if (event.lengthComputable) setProgress(Math.round(event.loaded / event.total * 100))
+      }
+      request.onload = () => {
+        uploadRef.current = null
+        if (request.status >= 200 && request.status < 300) {
+          resolve(request.response as ServerJob)
+        } else {
+          reject(new Error(request.response?.detail || 'A VPS recusou o envio do vídeo.'))
+        }
+      }
+      request.onerror = () => {
+        uploadRef.current = null
+        reject(new Error('A conexão com a VPS foi interrompida durante o upload.'))
+      }
+      request.onabort = () => reject(new Error('O upload foi cancelado.'))
+      request.send(video)
+    })
+  }
+
+  async function waitForServerJob(jobId: string) {
+    while (true) {
+      const response = await fetch(`/api/jobs/${jobId}`, { cache: 'no-store' })
+      if (!response.ok) throw new Error('Não foi possível consultar o andamento da conversão.')
+      const job = await response.json() as ServerJob
+      setProgress(job.progress)
+      if (job.status === 'ready') return job
+      if (job.status === 'error') throw new Error(job.error || 'A conversão falhou na VPS.')
+      await new Promise((resolve) => window.setTimeout(resolve, 1200))
+    }
+  }
+
+  async function convertOnServer(video: File) {
+    setStatus('uploading')
+    setProgress(0)
+    const queuedJob = await uploadToServer(video)
+    setStatus('converting')
+    setProgress(queuedJob.progress || 1)
+    const completedJob = await waitForServerJob(queuedJob.id)
+    if (!completedJob.download_url || !completedJob.output_name) {
+      throw new Error('A VPS concluiu a tarefa, mas não retornou o arquivo de áudio.')
+    }
+    setResult({
+      url: completedJob.download_url,
+      name: completedJob.output_name,
+      size: completedJob.output_size || 0,
+      remote: true,
+    })
+    setProgress(100)
+    setStatus('success')
+  }
+
   async function convert() {
     if (!file || busy) return
     resetResult()
@@ -150,6 +233,10 @@ function App() {
     const virtualOutput = `saida-${Date.now()}.${format}`
 
     try {
+      if (serverMode) {
+        await convertOnServer(file)
+        return
+      }
       const ffmpeg = await getFFmpeg()
       setStatus('converting')
       setProgress(8)
@@ -177,7 +264,11 @@ function App() {
       await Promise.allSettled([ffmpeg.deleteFile(inputName), ffmpeg.deleteFile(virtualOutput)])
     } catch (conversionError) {
       console.error(conversionError)
-      setError('Não foi possível converter este vídeo. Ele pode usar um codec incompatível ou ser grande demais para a memória do navegador.')
+      setError(serverMode && conversionError instanceof Error
+        ? conversionError.message
+        : serverMode
+          ? 'Não foi possível concluir a conversão na VPS.'
+          : 'Não foi possível converter este vídeo. Ele pode usar um codec incompatível ou ser grande demais para a memória do navegador.')
       setStatus('error')
       setProgress(0)
     }
@@ -190,20 +281,22 @@ function App() {
           <img src="./komanda-f5-logo.svg" alt="Komanda F5" />
         </a>
         <div className="tool-label"><span>F5</span> Tools</div>
-        <div className="privacy-note"><LockKeyhole size={15} /> Processamento privado</div>
+        <div className="privacy-note"><LockKeyhole size={15} /> {serverMode ? 'Processamento na VPS' : 'Processamento privado'}</div>
       </nav>
 
       <section className={`hero ${file ? 'hero-compact' : ''}`} id="top">
         <div className="hero-copy">
           <div className="eyebrow"><span /> Uma ferramenta Komanda F5</div>
           <h1>Vídeo em áudio.<br /><em>Sem complicação.</em></h1>
-          <p>Extraia o som dos seus vídeos em poucos cliques. Escolha o formato, ajuste a qualidade e baixe — tudo direto no navegador.</p>
+          <p>{serverMode
+            ? 'Envie vídeos grandes, escolha o formato e deixe a VPS fazer o trabalho pesado com FFmpeg nativo.'
+            : 'Extraia o som dos seus vídeos em poucos cliques. Escolha o formato, ajuste a qualidade e baixe — tudo direto no navegador.'}</p>
         </div>
         {!file && (
           <div className="hero-proof" aria-label="Benefícios">
             <div><strong>4</strong><span>formatos de áudio</span></div>
-            <div><strong>100%</strong><span>direto no navegador</span></div>
-            <div className="proof-wide"><ShieldCheck size={19} /><span>Seu arquivo não é enviado para servidores</span></div>
+            <div><strong>{serverMode ? `${serverMaxUploadGb} GB` : '100%'}</strong><span>{serverMode ? 'limite configurável' : 'direto no navegador'}</span></div>
+            <div className="proof-wide"><ShieldCheck size={19} /><span>{serverMode ? `Arquivos removidos automaticamente após ${serverRetentionHours} horas` : 'Seu arquivo não é enviado para servidores'}</span></div>
           </div>
         )}
       </section>
@@ -211,7 +304,7 @@ function App() {
       <section className={`converter ${file ? 'has-file' : ''}`} aria-label="Conversor de vídeo para áudio">
         <div className="converter-heading">
           <div><span className="heading-index">01</span><div><strong>Conversor de mídia</strong><small>Envie um arquivo para começar</small></div></div>
-          <span className="online-status"><i /> Pronto para usar</span>
+          <span className="online-status"><i /> {serverMode ? 'VPS disponível' : 'Pronto para usar'}</span>
         </div>
         <input
           ref={inputRef}
@@ -298,11 +391,11 @@ function App() {
                 </label>
               )}
 
-              {(status === 'loading' || status === 'converting') && (
+              {(status === 'uploading' || status === 'loading' || status === 'converting') && (
                 <div className="progress-card" aria-live="polite">
-                  <div><span>{status === 'loading' ? 'Preparando o conversor…' : 'Extraindo o áudio…'}</span><strong>{progress}%</strong></div>
+                  <div><span>{status === 'uploading' ? 'Enviando vídeo para a VPS…' : status === 'loading' ? 'Preparando o conversor…' : 'Extraindo o áudio…'}</span><strong>{progress}%</strong></div>
                   <div className="progress-track"><i style={{ width: `${Math.max(4, progress)}%` }} /></div>
-                  <small>Mantenha esta página aberta durante o processamento.</small>
+                  <small>{status === 'uploading' ? 'Não feche a página até o upload terminar.' : 'Mantenha esta página aberta durante o processamento.'}</small>
                 </div>
               )}
 
@@ -318,7 +411,7 @@ function App() {
                 </div>
               ) : (
                 <button className="convert-button" type="button" onClick={convert} disabled={busy || status === 'error'}>
-                  {busy ? <><RefreshCw className="spinning" size={19} /> Processando</> : <><Sparkles size={19} /> Converter para {format.toUpperCase()}</>}
+                  {busy ? <><RefreshCw className="spinning" size={19} /> {status === 'uploading' ? 'Enviando' : 'Processando'}</> : <><Sparkles size={19} /> Converter para {format.toUpperCase()}</>}
                 </button>
               )}
 

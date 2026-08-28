@@ -30,3 +30,18 @@ Arquivos muito grandes podem ultrapassar a memória disponível no navegador. O 
 ## Publicação
 
 O workflow em `.github/workflows/deploy.yml` publica automaticamente a branch `main` no GitHub Pages.
+
+## Versão para vídeos grandes em VPS
+
+O projeto inclui uma implantação Docker separada para processar vídeos grandes com FFmpeg nativo na VPS. Ela oferece:
+
+- upload em fluxo direto para disco, sem copiar o vídeo inteiro para a memória;
+- fila com limite configurável de conversões simultâneas;
+- progresso de upload e processamento;
+- persistência do estado da tarefa;
+- limite de tamanho e reserva mínima de disco;
+- remoção automática de arquivos;
+- frontend e API na mesma origem, servidos pelo Caddy;
+- proteção inicial por usuário e senha.
+
+Veja o roteiro completo em [`DEPLOY_VPS.md`](./DEPLOY_VPS.md).

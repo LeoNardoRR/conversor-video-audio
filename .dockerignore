@@ -1,0 +1,9 @@
+.git
+.github
+.env
+data
+dist
+logs
+node_modules
+npm-cache
+*.log
