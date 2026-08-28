@@ -1,0 +1,51 @@
+services:
+  backend:
+    build:
+      context: ./server
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data/jobs
+      MAX_UPLOAD_GB: ${MAX_UPLOAD_GB:-8}
+      MIN_FREE_GB: ${MIN_FREE_GB:-5}
+      RETENTION_HOURS: ${RETENTION_HOURS:-6}
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-1}
+    volumes:
+      - converter_data:/data
+    networks:
+      - converter
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  web:
+    container_name: conversor-web
+    build:
+      context: .
+      args:
+        VITE_CONVERSION_MODE: server
+        VITE_MAX_UPLOAD_GB: ${MAX_UPLOAD_GB:-8}
+        VITE_RETENTION_HOURS: ${RETENTION_HOURS:-6}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      SITE_ADDRESS: :80
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
+    networks:
+      converter:
+      rag-network:
+        aliases:
+          - conversor-web
+
+networks:
+  converter:
+  rag-network:
+    external: true
+
+volumes:
+  converter_data:
