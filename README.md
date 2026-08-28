@@ -1,6 +1,6 @@
-# Sonic - Conversor de vídeo para áudio
+# Komanda F5 — Conversor de vídeo para áudio
 
-Aplicação React que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
+Ferramenta com identidade visual Komanda F5 que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
 
 ## Rodar no computador
 

@@ -11,9 +11,9 @@ import {
   FileVideo2,
   LockKeyhole,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   UploadCloud,
-  WandSparkles,
   X,
 } from 'lucide-react'
 import './App.css'
@@ -186,20 +186,33 @@ function App() {
   return (
     <main className="app-shell">
       <nav className="topbar" aria-label="Navegação principal">
-        <a className="brand" href="#top" aria-label="Sonic — início">
-          <span className="brand-mark"><AudioWaveform size={18} strokeWidth={2.25} /></span>
-          <span>Sonic</span>
+        <a className="brand" href="#top" aria-label="Komanda F5 — início">
+          <img src="./komanda-f5-logo.svg" alt="Komanda F5" />
         </a>
-        <div className="privacy-note"><LockKeyhole size={14} /> Seus arquivos não saem do dispositivo</div>
+        <div className="tool-label"><span>F5</span> Tools</div>
+        <div className="privacy-note"><LockKeyhole size={15} /> Processamento privado</div>
       </nav>
 
       <section className={`hero ${file ? 'hero-compact' : ''}`} id="top">
-        <div className="eyebrow"><WandSparkles size={14} /> Conversão privada no navegador</div>
-        <h1>Do vídeo para o áudio.<br /><em>Simples assim.</em></h1>
-        <p>Extraia o som dos seus vídeos em poucos cliques, com qualidade e privacidade.</p>
+        <div className="hero-copy">
+          <div className="eyebrow"><span /> Uma ferramenta Komanda F5</div>
+          <h1>Vídeo em áudio.<br /><em>Sem complicação.</em></h1>
+          <p>Extraia o som dos seus vídeos em poucos cliques. Escolha o formato, ajuste a qualidade e baixe — tudo direto no navegador.</p>
+        </div>
+        {!file && (
+          <div className="hero-proof" aria-label="Benefícios">
+            <div><strong>4</strong><span>formatos de áudio</span></div>
+            <div><strong>100%</strong><span>direto no navegador</span></div>
+            <div className="proof-wide"><ShieldCheck size={19} /><span>Seu arquivo não é enviado para servidores</span></div>
+          </div>
+        )}
       </section>
 
       <section className={`converter ${file ? 'has-file' : ''}`} aria-label="Conversor de vídeo para áudio">
+        <div className="converter-heading">
+          <div><span className="heading-index">01</span><div><strong>Conversor de mídia</strong><small>Envie um arquivo para começar</small></div></div>
+          <span className="online-status"><i /> Pronto para usar</span>
+        </div>
         <input
           ref={inputRef}
           className="sr-only"
@@ -224,10 +237,10 @@ function App() {
               selectFile(event.dataTransfer.files?.[0])
             }}
           >
-            <span className="upload-icon"><UploadCloud size={28} strokeWidth={1.8} /></span>
-            <strong>{dragging ? 'Pode soltar o vídeo' : 'Solte seu vídeo aqui'}</strong>
-            <span>ou clique para escolher um arquivo</span>
-            <small>MP4, MOV, AVI, MKV, M4V e WebM</small>
+            <span className="upload-icon"><UploadCloud size={30} strokeWidth={1.7} /></span>
+            <strong>{dragging ? 'Pode soltar o vídeo' : 'Arraste seu vídeo para cá'}</strong>
+            <span>ou <b>escolha um arquivo</b> no seu dispositivo</span>
+            <small><i /> MP4, MOV, AVI, MKV, M4V e WebM</small>
           </button>
         ) : (
           <div className="workspace">
@@ -324,7 +337,7 @@ function App() {
         )}
       </section>
 
-      <footer><span>Rápido</span><i /> <span>Privado</span><i /> <span>Sem cadastro</span></footer>
+      <footer><img src="./komanda-f5-logo.svg" alt="Komanda F5" /><span>Feito para simplificar o seu trabalho.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
     </main>
   )
 }
