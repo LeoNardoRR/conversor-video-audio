@@ -228,7 +228,7 @@ def detect_lead_query_type(value: str) -> str:
 def external_json(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
     request_headers = {
         "Accept": "application/json",
-        "User-Agent": "KomandaF5-LeadIntel/1.0",
+        "User-Agent": "MediaTools-LeadIntel/1.0",
         **(headers or {}),
     }
     request = UrlRequest(url, headers=request_headers)
@@ -304,7 +304,7 @@ def fetch_website(domain: str) -> dict[str, Any]:
         url,
         headers={
             "Accept": "text/html,application/xhtml+xml",
-            "User-Agent": "Mozilla/5.0 (compatible; KomandaF5-LeadIntel/1.0)",
+            "User-Agent": "Mozilla/5.0 (compatible; MediaTools-LeadIntel/1.0)",
         },
     )
     with opener.open(request, timeout=10) as response:
@@ -579,7 +579,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Komanda F5 Converter API", docs_url=None, redoc_url=None, lifespan=lifespan
+    title="Media Tools API", docs_url=None, redoc_url=None, lifespan=lifespan
 )
 
 

@@ -154,7 +154,7 @@ function LeadIntel() {
     if (!result) return
     const company = result.company
     const lines = [
-      `Pesquisa F5 Lead Intel — ${formatDate(result.searched_at)}`,
+      `Pesquisa Lead Intel — ${formatDate(result.searched_at)}`,
       company?.trade_name || company?.legal_name || query,
       company?.cnpj ? `CNPJ: ${company.cnpj}` : '',
       company?.registration_status ? `Situação: ${company.registration_status}` : '',

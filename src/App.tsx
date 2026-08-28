@@ -296,10 +296,10 @@ function App() {
   return (
     <main className="app-shell">
       <nav className="topbar" aria-label="Navegação principal">
-        <a className="brand" href="#top" aria-label="Komanda F5 — início">
-          <img src="./komanda-f5-logo.svg" alt="Komanda F5" />
+        <a className="brand" href="#top" aria-label="Media Tools — início">
+          <strong>MEDIA</strong><span>TOOLS</span>
         </a>
-        <div className="tool-switch" aria-label="Ferramentas Komanda F5">
+        <div className="tool-switch" aria-label="Ferramentas do portal">
           <button type="button" className={activeTool === 'converter' ? 'active' : ''} onClick={() => changeTool('converter')}>Conversor</button>
           <button type="button" className={activeTool === 'lead-intel' ? 'active' : ''} onClick={() => changeTool('lead-intel')}>Lead Intel</button>
         </div>
@@ -309,7 +309,7 @@ function App() {
       {activeTool === 'converter' ? <>
       <section className={`hero ${file ? 'hero-compact' : ''}`} id="top">
         <div className="hero-copy">
-          <div className="eyebrow"><span /> Uma ferramenta Komanda F5</div>
+          <div className="eyebrow"><span /> Conversão inteligente de mídia</div>
           <h1>Vídeo em áudio.<br /><em>Sem complicação.</em></h1>
           <p>{serverMode
             ? 'Envie vídeos grandes, escolha o formato e deixe a VPS fazer o trabalho pesado com FFmpeg nativo.'
@@ -455,7 +455,7 @@ function App() {
 
       </> : <LeadIntel />}
 
-      <footer><img src="./komanda-f5-logo.svg" alt="Komanda F5" /><span>Feito para simplificar o seu trabalho.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
+      <footer><strong className="footer-brand">MEDIA <span>TOOLS</span></strong><span>Feito para simplificar o seu trabalho.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
     </main>
   )
 }

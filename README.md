@@ -1,8 +1,8 @@
-# Komanda F5 — Conversor de vídeo para áudio
+# Media Tools — Conversor de vídeo para áudio
 
-Ferramenta com identidade visual Komanda F5 que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
+Ferramenta que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
 
-O mesmo portal também inclui o **F5 Lead Intel**, uma pesquisa empresarial com salvaguardas de privacidade e fontes rastreáveis.
+O mesmo portal também inclui o **Lead Intel**, uma pesquisa empresarial com salvaguardas de privacidade e fontes rastreáveis.
 
 ## Rodar no computador
 
@@ -48,7 +48,7 @@ O projeto inclui uma implantação Docker separada para processar vídeos grande
 
 Veja o roteiro completo em [`DEPLOY_VPS.md`](./DEPLOY_VPS.md).
 
-## F5 Lead Intel
+## Lead Intel
 
 Abra a ferramenta **Lead Intel** na navegação superior ou use `#lead-intel` no final do endereço.
 
