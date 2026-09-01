@@ -17,7 +17,7 @@ RUN git clone --branch "${WHISPER_CPP_VERSION}" --depth 1 https://github.com/ggm
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 whisper \
     && mkdir -p /models \
