@@ -26,14 +26,22 @@ services:
       start_period: 20s
 
   transcriber:
-    image: ghcr.io/ggml-org/whisper.cpp:main
+    build:
+      context: ./transcriber
+    image: media-tools-transcriber
     restart: unless-stopped
-    working_dir: /app
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
-        test -f /models/ggml-base.bin || ./models/download-ggml-model.sh base /models
+        MODEL=/models/ggml-base.bin
+        EXPECTED_SHA=465707469ff3a37a2b9b8d8f89f2f99de7299dac
+        if [ ! -f "$${MODEL}" ] || ! echo "$${EXPECTED_SHA}  $${MODEL}" | sha1sum -c - >/dev/null 2>&1; then
+          rm -f "$${MODEL}" "$${MODEL}.tmp"
+          curl --fail --location --retry 3 --output "$${MODEL}.tmp" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+          echo "$${EXPECTED_SHA}  $${MODEL}.tmp" | sha1sum -c -
+          mv "$${MODEL}.tmp" "$${MODEL}"
+        fi
         exec whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.bin --threads 2
     volumes:
       - whisper_models:/models

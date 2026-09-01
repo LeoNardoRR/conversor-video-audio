@@ -83,7 +83,7 @@ sudo docker compose up -d --build
 sudo docker compose ps
 ```
 
-Na primeira inicialização, o container `transcriber` baixa o modelo multilíngue `base` do Whisper. Confira os registros:
+Na primeira inicialização, a VPS compila o `whisper.cpp` para sua arquitetura e o container `transcriber` baixa e verifica o modelo multilíngue `base`. Confira os registros:
 
 ```bash
 sudo docker compose logs --tail=100 backend transcriber web
