@@ -49,6 +49,7 @@ ALLOWED_AUDIO_EXTENSIONS = {
     "wma",
     "webm",
 }
+ALLOWED_TRANSCRIPTION_EXTENSIONS = ALLOWED_AUDIO_EXTENSIONS | ALLOWED_EXTENSIONS
 ALLOWED_TRANSCRIPTION_LANGUAGES = {"auto", "pt", "en", "es"}
 ALLOWED_BITRATES = {128, 192, 256, 320}
 FORMAT_CONFIG = {
@@ -564,9 +565,13 @@ async def convert_job(job_id: str) -> None:
                     "-y",
                     "-hide_banner",
                     "-nostdin",
+                    "-threads",
+                    "2",
                     "-i",
                     str(input_path),
                     "-vn",
+                    "-sn",
+                    "-dn",
                     *codec_args,
                     "-progress",
                     "pipe:1",
@@ -651,7 +656,7 @@ async def transcribe_job(job_id: str) -> None:
             if duration > MAX_TRANSCRIPTION_SECONDS:
                 hours = MAX_TRANSCRIPTION_SECONDS / 3600
                 raise RuntimeError(
-                    f"O áudio ultrapassa o limite de {hours:g} horas por transcrição."
+                    f"A mídia ultrapassa o limite de {hours:g} horas por transcrição."
                 )
 
             with log_path.open("wb") as log_file:
@@ -660,9 +665,13 @@ async def transcribe_job(job_id: str) -> None:
                     "-y",
                     "-hide_banner",
                     "-nostdin",
+                    "-threads",
+                    "2",
                     "-i",
                     str(input_path),
                     "-vn",
+                    "-sn",
+                    "-dn",
                     "-ar",
                     "16000",
                     "-ac",
@@ -675,7 +684,7 @@ async def transcribe_job(job_id: str) -> None:
                 )
                 exit_code = await process.wait()
             if exit_code != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
-                raise RuntimeError("Não foi possível preparar esse áudio para transcrição.")
+                raise RuntimeError("Não foi possível extrair ou preparar o áudio desta mídia.")
 
             job.update(stage="recognizing", progress=38, updated_at=now())
             persist(job)
@@ -1104,8 +1113,8 @@ async def create_transcription(
     raw_name = unquote(request.headers.get("x-filename", "audio.mp3"))
     original_name = safe_name(raw_name)
     extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
-    if extension not in ALLOWED_AUDIO_EXTENSIONS:
-        raise HTTPException(400, "Formato de áudio não permitido.")
+    if extension not in ALLOWED_TRANSCRIPTION_EXTENSIONS:
+        raise HTTPException(400, "Formato de áudio ou vídeo não permitido.")
 
     content_length = request.headers.get("content-length")
     expected_size = int(content_length) if content_length and content_length.isdigit() else 0
@@ -1113,7 +1122,7 @@ async def create_transcription(
         raise HTTPException(413, "O arquivo ultrapassa o limite configurado no servidor.")
     transcription_work_bytes = MAX_TRANSCRIPTION_SECONDS * 32_000
     if shutil.disk_usage(DATA_DIR).free < expected_size + transcription_work_bytes + MIN_FREE_BYTES:
-        raise HTTPException(507, "Não há espaço suficiente na VPS para transcrever este áudio.")
+        raise HTTPException(507, "Não há espaço suficiente na VPS para transcrever esta mídia.")
 
     job_id = uuid.uuid4().hex
     job_dir = DATA_DIR / job_id

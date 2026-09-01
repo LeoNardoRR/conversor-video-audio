@@ -4,5 +4,5 @@
 html { scroll-behavior: smooth; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: linear-gradient(180deg, #fff 0, #f8f8f6 100%); }
 button, a { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, a:focus-visible, select:focus-visible { outline: 3px solid rgba(255,107,0,.25); outline-offset: 3px; }
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid rgba(255,107,0,.25); outline-offset: 3px; }
 ::selection { color: white; background: var(--accent); }

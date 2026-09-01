@@ -154,7 +154,7 @@ function LeadIntel() {
     if (!result) return
     const company = result.company
     const lines = [
-      `Pesquisa Lead Intel — ${formatDate(result.searched_at)}`,
+      `Análise de empresa — ${formatDate(result.searched_at)}`,
       company?.trade_name || company?.legal_name || query,
       company?.cnpj ? `CNPJ: ${company.cnpj}` : '',
       company?.registration_status ? `Situação: ${company.registration_status}` : '',
@@ -173,23 +173,24 @@ function LeadIntel() {
   }
 
   return (
-    <div className="intel-page" id="lead-intel">
+    <div className="intel-page" id="analise-empresas">
       <section className="intel-hero">
         <div>
-          <div className="eyebrow"><span /> Inteligência comercial responsável</div>
-          <h1>Conheça a empresa.<br /><em>Respeite a pessoa.</em></h1>
-          <p>Parta de qualquer dado que já veio no card do Kommo, encontre contexto público sobre o lead e complete o cadastro com revisão humana.</p>
+          <div className="eyebrow"><span /> Análise empresarial responsável</div>
+          <h1>Entenda a empresa.<br /><em>Decida com contexto.</em></h1>
+          <p>Use um dado do card para localizar informações empresariais públicas, conferir a identidade do lead e preparar a próxima ação comercial.</p>
         </div>
         <div className="intel-trust">
           <ShieldCheck size={25} />
-          <div><strong>LGPD desde o desenho</strong><span>Finalidade, minimização, fontes e auditoria.</span></div>
+          <div><strong>Pesquisa com rastreabilidade</strong><span>Finalidade registrada, dados minimizados e fontes visíveis.</span></div>
         </div>
       </section>
+      <p className="intel-scope-note"><AlertCircle size={15} /> Esta ferramenta complementa dados públicos. Origem, responsável, etapa e histórico do lead continuam sendo consultados no Kommo.</p>
 
       <section className="intel-layout" aria-label="Pesquisa empresarial">
         <form className="intel-search-card" onSubmit={research}>
           <div className="intel-card-heading">
-            <div><span className="heading-index">01</span><div><strong>Nova pesquisa</strong><small>Somente contexto empresarial legítimo</small></div></div>
+            <div><span className="heading-index">01</span><div><strong>Analisar empresa</strong><small>Comece pelo dado mais confiável do card</small></div></div>
             <span className="online-status"><i /> API protegida</span>
           </div>
 
@@ -230,7 +231,7 @@ function LeadIntel() {
             {error && <div className="intel-error" role="alert"><AlertCircle size={18} /><span>{error}</span></div>}
 
             <button className="intel-submit" type="submit" disabled={!canSearch}>
-              {loading ? <><LoaderCircle className="spinning" size={19} /> Consultando fontes…</> : <><Search size={19} /> Pesquisar lead</>}
+              {loading ? <><LoaderCircle className="spinning" size={19} /> Consultando fontes…</> : <><Search size={19} /> Analisar empresa</>}
             </button>
             <p className="intel-legal-note">Não substitui avaliação jurídica. Dados públicos também exigem finalidade, necessidade e transparência.</p>
           </div>
@@ -240,8 +241,8 @@ function LeadIntel() {
           {!result && !loading ? (
             <div className="intel-empty">
               <span><Building2 size={31} /></span>
-              <strong>Comece pelo dado que você já tem</strong>
-              <p>Cole um nome, empresa, cidade, CNPJ ou domínio do card. O sistema identifica o melhor caminho e mostra os dados públicos encontrados com as fontes.</p>
+              <strong>Comece pelo dado mais confiável</strong>
+              <p>Prefira o CNPJ. Você também pode usar domínio ou nome da empresa com cidade para encontrar dados públicos e suas fontes.</p>
               <div><Database size={15} /> Cadastro público <i /> <Globe2 size={15} /> Web aberta <i /> <ShieldCheck size={15} /> Fontes visíveis</div>
             </div>
           ) : loading ? (
@@ -254,6 +255,25 @@ function LeadIntel() {
               </header>
 
               {result.warnings.length > 0 && <div className="intel-warning"><AlertCircle size={18} /><div>{result.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div></div>}
+
+              <section className="intel-decision-grid" aria-label="Resumo para decisão">
+                <article>
+                  <span>Resumo da empresa</span>
+                  <strong>{result.company?.registration_status || 'Situação não confirmada'}</strong>
+                  <p>{[result.company?.primary_activity, result.company?.city, result.company?.state].filter(Boolean).join(' · ') || 'Ainda não há dados cadastrais suficientes.'}</p>
+                </article>
+                <article>
+                  <span>Sinais encontrados</span>
+                  <strong>{[result.website ? 'site' : '', result.company?.business_phone_1 ? 'telefone' : '', result.company?.business_email ? 'e-mail' : ''].filter(Boolean).length} canais públicos</strong>
+                  <p>{result.company?.partners?.length ? `${result.company.partners.length} sócio(s) ou administrador(es) publicado(s).` : 'Nenhum quadro societário confirmado nesta consulta.'}</p>
+                </article>
+                <article className="recommended-action">
+                  <span>Próxima ação recomendada</span>
+                  <strong>{result.company ? 'Validar e completar o card' : 'Confirmar a identidade da empresa'}</strong>
+                  <p>{result.company ? 'Compare os dados com o lead antes de atualizar o CRM.' : 'Refaça a busca com CNPJ ou adicione cidade e estado.'}</p>
+                  <button type="button" onClick={copySummary}><Copy size={14} /> Copiar resumo para o CRM</button>
+                </article>
+              </section>
 
               {result.company && <article className="intel-section">
                 <div className="intel-section-title"><Building2 size={18} /><div><strong>Cadastro empresarial</strong><span>Dados selecionados e minimizados</span></div></div>
@@ -290,15 +310,15 @@ function LeadIntel() {
                 <div className="intel-web-list">{result.web_results.map((item) => <a key={item.url} href={item.url} target="_blank" rel="noreferrer"><div><small>{item.domain}</small><strong>{item.title}</strong><span>{item.description}</span></div><ExternalLink size={16} /></a>)}</div>
               </article>}
 
-              <article className="intel-section">
-                <div className="intel-section-title"><Database size={18} /><div><strong>Provedores consultados</strong><span>Status transparente da pesquisa</span></div></div>
+              <details className="intel-section intel-disclosure">
+                <summary className="intel-section-title"><Database size={18} /><div><strong>Provedores consultados</strong><span>Ver detalhes técnicos da pesquisa</span></div></summary>
                 <div className="intel-provider-list">{result.providers.map((provider) => <div key={provider.name}><i className={`status-${provider.status}`} /><div><strong>{provider.name}</strong><span>{provider.detail}</span></div></div>)}</div>
-              </article>
+              </details>
 
-              <article className="intel-section intel-sources">
-                <div className="intel-section-title"><ShieldCheck size={18} /><div><strong>Fontes e rastreabilidade</strong><span>{result.sources.length} fonte(s) usada(s)</span></div></div>
+              <details className="intel-section intel-sources intel-disclosure">
+                <summary className="intel-section-title"><ShieldCheck size={18} /><div><strong>Fontes e rastreabilidade</strong><span>{result.sources.length} fonte(s) usada(s) · ver detalhes</span></div></summary>
                 {result.sources.length ? result.sources.map((source) => <a key={`${source.provider}-${source.url}`} href={source.url} target="_blank" rel="noreferrer"><div><strong>{source.title}</strong><span>{source.provider} · verificada em {formatDate(source.checked_at)}</span></div><ExternalLink size={15} /></a>) : <p>Nenhuma fonte confirmou dados para esta consulta.</p>}
-              </article>
+              </details>
             </div>
           )}
         </section>

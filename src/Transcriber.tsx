@@ -6,10 +6,10 @@ import {
   Clipboard,
   Download,
   FileAudio2,
+  FileVideo2,
   Languages,
   LoaderCircle,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
   UploadCloud,
   X,
@@ -32,6 +32,7 @@ type TranscriptionJob = {
 }
 
 const audioExtensions = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus', 'wma', 'webm']
+const videoExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpeg', 'mpg']
 const languageOptions = [
   { value: 'auto', label: 'Detectar automaticamente', hint: 'Melhor para a maioria dos áudios' },
   { value: 'pt', label: 'Português', hint: 'Prioriza falas em português' },
@@ -57,9 +58,9 @@ function formatDuration(seconds: number) {
 }
 
 const stageLabels: Record<TranscriptionJob['stage'], string> = {
-  uploading: 'Enviando o áudio para a VPS',
+  uploading: 'Enviando o arquivo para a VPS',
   queued: 'Aguardando a fila de processamento',
-  preparing: 'Preparando e normalizando o áudio',
+  preparing: 'Extraindo e preparando o áudio',
   recognizing: 'Reconhecendo as falas com IA local',
   complete: 'Transcrição concluída',
   error: 'A transcrição não foi concluída',
@@ -84,6 +85,8 @@ export default function Transcriber() {
 
   const busy = status === 'uploading' || status === 'transcribing'
   const selectedLanguage = languageOptions.find((item) => item.value === language)!
+  const selectedExtension = file?.name.split('.').pop()?.toLowerCase() || ''
+  const isVideo = Boolean(file && (file.type.startsWith('video/') || videoExtensions.includes(selectedExtension)))
 
   useEffect(() => () => {
     uploadRef.current?.abort()
@@ -93,13 +96,15 @@ export default function Transcriber() {
   function selectFile(nextFile?: File) {
     if (!nextFile || busy) return
     const extension = nextFile.name.split('.').pop()?.toLowerCase() || ''
-    if (!nextFile.type.startsWith('audio/') && !audioExtensions.includes(extension)) {
-      setError('Esse arquivo não parece ser um áudio compatível. Tente MP3, WAV, M4A, OGG ou FLAC.')
+    const supportedAudio = nextFile.type.startsWith('audio/') || audioExtensions.includes(extension)
+    const supportedVideo = nextFile.type.startsWith('video/') || videoExtensions.includes(extension)
+    if (!supportedAudio && !supportedVideo) {
+      setError('Esse arquivo não parece ser um áudio ou vídeo compatível. Tente MP3, WAV, M4A, MP4, MOV ou WebM.')
       setStatus('error')
       return
     }
     if (!nextFile.size) {
-      setError('O arquivo está vazio. Escolha outro áudio para continuar.')
+      setError('O arquivo está vazio. Escolha outra mídia para continuar.')
       setStatus('error')
       return
     }
@@ -143,9 +148,17 @@ export default function Transcriber() {
       request.onload = () => {
         uploadRef.current = null
         if (request.status >= 200 && request.status < 300) resolve(request.response as TranscriptionJob)
-        else reject(new Error(request.response?.detail || 'A VPS recusou o envio do áudio.'))
+        else {
+          const detail = request.response?.detail
+          const localBackendUnavailable = import.meta.env.DEV && request.status >= 500 && !detail
+          reject(new Error(localBackendUnavailable
+            ? 'O backend local não está ativo. Para transcrever, inicie os serviços Docker ou teste pela versão publicada na VPS.'
+            : detail || `A VPS recusou o arquivo (erro ${request.status || 'de conexão'}).`))
+        }
       }
-      request.onerror = () => reject(new Error('A conexão foi interrompida durante o upload.'))
+      request.onerror = () => reject(new Error(import.meta.env.DEV
+        ? 'Não foi possível acessar o backend local na porta 8000.'
+        : 'A conexão foi interrompida durante o upload.'))
       request.onabort = () => reject(new Error('O upload foi cancelado.'))
       request.send(audio)
     })
@@ -186,7 +199,7 @@ export default function Transcriber() {
       setStage('complete')
       setStatus('success')
     } catch (transcriptionError) {
-      setError(transcriptionError instanceof Error ? transcriptionError.message : 'Não foi possível transcrever o áudio.')
+      setError(transcriptionError instanceof Error ? transcriptionError.message : 'Não foi possível transcrever este arquivo.')
       setProgress(0)
       setStage('error')
       setStatus('error')
@@ -210,45 +223,31 @@ export default function Transcriber() {
   }
 
   return (
-    <div className="transcriber-page" id="audio-texto">
-      <section className="transcriber-hero">
-        <div>
-          <div className="eyebrow"><span /> Transcrição inteligente e privada</div>
-          <h1>Áudio em texto.<br /><em>Pronto para usar.</em></h1>
-          <p>Envie reuniões, treinamentos e gravações. A IA roda na própria VPS e entrega um texto que você pode revisar, copiar e baixar.</p>
-        </div>
-        <div className="transcriber-trust">
-          <ShieldCheck size={25} />
-          <div><strong>IA dentro da sua VPS</strong><span>O áudio não é enviado para serviços externos de transcrição.</span></div>
-        </div>
-      </section>
-
-      <section className={`transcriber-card ${file ? 'has-file' : ''}`} aria-label="Conversor de áudio para texto">
+      <div className={`converter-flow transcriber-flow ${file ? 'has-file' : ''}`} id="midia-texto" role="tabpanel" aria-label="Conversor de áudio ou vídeo para texto">
         <div className="converter-heading">
-          <div><span className="heading-index">01</span><div><strong>Áudio para texto</strong><small>Envie uma gravação para começar</small></div></div>
+          <div><span className="heading-index">01</span><div><strong>Selecione um áudio ou vídeo</strong><small>A VPS extrai a fala e entrega um texto editável</small></div></div>
           <span className="online-status"><i /> Whisper local</span>
         </div>
-        <input ref={inputRef} className="sr-only" type="file" accept="audio/*,.wma,.opus" onChange={(event) => selectFile(event.target.files?.[0])} aria-label="Escolher arquivo de áudio" />
+        {import.meta.env.DEV && <div className="dev-backend-note"><AlertCircle size={16} /><span><strong>Prévia local</strong> Para transcrever, o backend e o Whisper precisam estar ativos. A versão publicada usa esses serviços na VPS.</span></div>}
+        <input ref={inputRef} className="sr-only" type="file" accept="audio/*,video/*,.wma,.opus,.mkv,.avi,.m4v" onChange={(event) => selectFile(event.target.files?.[0])} aria-label="Escolher arquivo de áudio ou vídeo" />
 
         {!file ? (
           <button className={`dropzone transcription-dropzone ${dragging ? 'is-dragging' : ''}`} type="button" onClick={() => inputRef.current?.click()}
             onDragEnter={(event) => { event.preventDefault(); setDragging(true) }} onDragOver={(event) => event.preventDefault()}
             onDragLeave={(event) => { event.preventDefault(); setDragging(false) }} onDrop={(event) => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files?.[0]) }}>
             <span className="upload-icon"><UploadCloud size={30} strokeWidth={1.7} /></span>
-            <strong>{dragging ? 'Pode soltar o áudio' : 'Arraste seu áudio para cá'}</strong>
+            <strong>{dragging ? 'Pode soltar o arquivo' : 'Arraste seu áudio ou vídeo para cá'}</strong>
             <span>ou <b>escolha um arquivo</b> no seu dispositivo</span>
-            <small><i /> MP3, WAV, M4A, AAC, OGG, FLAC, OPUS e WMA</small>
+            <small><i /> Áudio: MP3, WAV, M4A, OGG · Vídeo: MP4, MOV, AVI, MKV, WebM</small>
           </button>
         ) : (
           <div className="transcription-workspace">
             <aside className="transcription-sidebar">
               <div className="audio-preview">
-                <span><AudioLines size={34} /></span>
-                <strong>Prévia do áudio</strong>
-                <audio src={audioUrl} controls preload="metadata" onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} />
+                {isVideo ? <video src={audioUrl} controls preload="metadata" onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} /> : <><span><AudioLines size={34} /></span><strong>Prévia do áudio</strong><audio src={audioUrl} controls preload="metadata" onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} /></>}
               </div>
               <div className="file-summary">
-                <span className="file-icon"><FileAudio2 size={20} /></span>
+                <span className="file-icon">{isVideo ? <FileVideo2 size={20} /> : <FileAudio2 size={20} />}</span>
                 <div className="file-copy"><strong title={file.name}>{file.name}</strong><span>{formatBytes(file.size)} · {formatDuration(duration)}</span></div>
                 <button className="icon-button" type="button" onClick={clearFile} disabled={busy} aria-label="Remover áudio"><X size={18} /></button>
               </div>
@@ -256,7 +255,7 @@ export default function Transcriber() {
                 <div className="step-heading"><span>02</span><div><strong>Idioma da gravação</strong><small>Ajuda a IA a reconhecer melhor</small></div></div>
                 <label className="language-select"><Languages size={18} /><span><strong>{selectedLanguage.label}</strong><small>{selectedLanguage.hint}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)} disabled={busy}>{languageOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               </div>
-              {status !== 'success' && <button className="convert-button" type="button" onClick={transcribe} disabled={busy}><Sparkles size={17} />{busy ? 'Transcrevendo…' : 'Transcrever áudio'}</button>}
+              {status !== 'success' && <button className="convert-button" type="button" onClick={transcribe} disabled={busy}><Sparkles size={17} />{busy ? 'Transcrevendo…' : isVideo ? 'Transcrever vídeo' : 'Transcrever áudio'}</button>}
               {busy && <div className="progress-card"><div><span>{stageLabels[stage]}</span><strong>{progress}%</strong></div><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>Áudios longos podem levar alguns minutos. Você pode manter esta aba aberta.</small></div>}
               {error && <div className="error-message"><AlertCircle size={17} /><span>{error}</span></div>}
             </aside>
@@ -270,8 +269,7 @@ export default function Transcriber() {
             </div>
           </div>
         )}
-        {!file && <div className="format-row"><span>Processamento local na VPS</span><div><span className="format-pill">IA LOCAL</span><span className="format-pill">TXT</span><span className="format-pill">MULTILÍNGUE</span></div></div>}
-      </section>
-    </div>
+        {!file && <div className="format-row"><span>Áudio e vídeo processados na VPS</span><div><span className="format-pill">IA LOCAL</span><span className="format-pill">TXT</span><span className="format-pill">MULTILÍNGUE</span></div></div>}
+      </div>
   )
 }

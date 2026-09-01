@@ -139,6 +139,35 @@ class ConverterApiTest(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 400)
 
+    def test_transcription_accepts_video_for_audio_extraction(self) -> None:
+        async def fake_transcription(job_id: str) -> None:
+            await asyncio.sleep(0)
+            job = self.main.jobs[job_id]
+            output_path = Path(job["output_path"])
+            output_path.write_text("Texto extraído do vídeo.\n", encoding="utf-8")
+            Path(job["input_path"]).unlink(missing_ok=True)
+            job.update(
+                status="ready",
+                stage="complete",
+                progress=100,
+                output_size=output_path.stat().st_size,
+                character_count=23,
+                updated_at=self.main.now(),
+            )
+            self.main.persist(job)
+
+        with (
+            patch.object(self.main, "transcribe_job", fake_transcription),
+            TestClient(self.main.app) as client,
+        ):
+            created = client.post(
+                "/api/transcriptions?language=pt",
+                content=b"small-video-payload",
+                headers={"X-Filename": "treinamento.mp4", "Content-Type": "video/mp4"},
+            )
+            self.assertEqual(created.status_code, 202)
+            self.assertEqual(created.json()["original_name"], "treinamento.mp4")
+
     def test_lead_research_requires_authorization_and_blocks_personal_lookup(
         self,
     ) -> None:

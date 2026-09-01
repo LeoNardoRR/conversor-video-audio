@@ -2,7 +2,7 @@
 
 Ferramenta que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
 
-O mesmo portal também inclui **Áudio para Texto**, com Whisper local na VPS, e o **Lead Intel**, uma pesquisa empresarial com salvaguardas de privacidade e fontes rastreáveis.
+O mesmo portal também inclui **Mídia para Texto**, que transcreve áudio ou vídeo com Whisper local na VPS, e **Análise de Empresas**, uma pesquisa empresarial com salvaguardas de privacidade e fontes rastreáveis.
 
 ## Rodar no computador
 
@@ -45,26 +45,28 @@ O projeto inclui uma implantação Docker separada para processar vídeos grande
 - remoção automática de arquivos;
 - frontend e API na mesma origem, servidos pelo Caddy;
 - proteção inicial por usuário e senha.
-- transcrição local de áudio com `whisper.cpp`, sem enviar gravações a APIs externas.
+- transcrição local de áudio e vídeo com `whisper.cpp`, sem enviar gravações a APIs externas.
 
 Veja o roteiro completo em [`DEPLOY_VPS.md`](./DEPLOY_VPS.md).
 
-## Áudio para texto
+## Áudio ou vídeo para texto
 
-Abra **Áudio → Texto** na navegação superior ou use `#audio-texto` no endereço.
+Abra **Conversores → Áudio ou vídeo → texto** ou use `#midia-texto` no endereço. O endereço legado `#audio-texto` continua compatível.
 
-- aceita MP3, WAV, M4A, AAC, OGG, FLAC, OPUS, WMA e áudio WebM;
+- aceita áudio em MP3, WAV, M4A, AAC, OGG, FLAC, OPUS, WMA e WebM;
+- aceita vídeo em MP4, MOV, AVI, MKV, M4V, MPEG, MPG e WebM, extraindo o áudio automaticamente;
 - detecta o idioma automaticamente ou prioriza português, inglês e espanhol;
 - permite revisar, editar, copiar e baixar a transcrição em TXT;
 - processa uma tarefa pesada por vez para proteger a VPS;
+- usa decodificação sem timestamps e busca reduzida para diminuir o tempo de processamento na VPS;
 - remove o áudio e o texto conforme `RETENTION_HOURS`;
 - limita a duração por `MAX_TRANSCRIPTION_HOURS`, com padrão de 6 horas.
 
 A transcrição automática pode errar nomes próprios, números e termos técnicos. Revise o texto antes de usar em documentação, CRM ou decisões.
 
-## Lead Intel
+## Análise de Empresas
 
-Abra a ferramenta **Lead Intel** na navegação superior ou use `#lead-intel` no final do endereço.
+Abra **Análise de empresas** na navegação superior ou use `#analise-empresas` no final do endereço. O endereço legado `#lead-intel` continua compatível.
 
 O MVP permite:
 

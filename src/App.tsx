@@ -11,7 +11,6 @@ import {
   FileVideo2,
   LockKeyhole,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
   UploadCloud,
   X,
@@ -32,11 +31,10 @@ type ServerJob = {
   output_size?: number
   download_url?: string
 }
-type ActiveTool = 'converter' | 'transcriber' | 'lead-intel'
+type ActiveTool = 'converter' | 'company-analysis'
+type ConversionMode = 'video-audio' | 'audio-text'
 
 const serverMode = import.meta.env.VITE_CONVERSION_MODE === 'server'
-const serverMaxUploadGb = import.meta.env.VITE_MAX_UPLOAD_GB || '12'
-const serverRetentionHours = import.meta.env.VITE_RETENTION_HOURS || '6'
 
 const formats: { value: AudioFormat; label: string; description: string }[] = [
   { value: 'mp3', label: 'MP3', description: 'Compatível e leve' },
@@ -55,9 +53,12 @@ const bitrateOptions = [
 const acceptedExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpeg', 'mpg']
 
 function toolFromHash(): ActiveTool {
-  if (window.location.hash === '#lead-intel') return 'lead-intel'
-  if (window.location.hash === '#audio-texto') return 'transcriber'
+  if (window.location.hash === '#lead-intel' || window.location.hash === '#analise-empresas') return 'company-analysis'
   return 'converter'
+}
+
+function conversionModeFromHash(): ConversionMode {
+  return window.location.hash === '#audio-texto' || window.location.hash === '#midia-texto' ? 'audio-text' : 'video-audio'
 }
 
 function formatBytes(bytes: number) {
@@ -93,6 +94,7 @@ function App() {
   const [result, setResult] = useState<ConversionResult | null>(null)
   const [dragging, setDragging] = useState(false)
   const [activeTool, setActiveTool] = useState<ActiveTool>(toolFromHash)
+  const [conversionMode, setConversionMode] = useState<ConversionMode>(conversionModeFromHash)
 
   const busy = status === 'uploading' || status === 'loading' || status === 'converting'
   const selectedBitrate = useMemo(
@@ -115,19 +117,24 @@ function App() {
   useEffect(() => () => uploadRef.current?.abort(), [])
 
   useEffect(() => {
-    const onHashChange = () => setActiveTool(toolFromHash())
+    const onHashChange = () => {
+      setActiveTool(toolFromHash())
+      setConversionMode(conversionModeFromHash())
+    }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
   function changeTool(tool: ActiveTool) {
-    window.location.hash = tool === 'lead-intel'
-      ? 'lead-intel'
-      : tool === 'transcriber'
-        ? 'audio-texto'
-        : 'top'
+    window.location.hash = tool === 'company-analysis' ? 'analise-empresas' : conversionMode === 'audio-text' ? 'midia-texto' : 'conversores'
     setActiveTool(tool)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function changeConversionMode(mode: ConversionMode) {
+    setConversionMode(mode)
+    setActiveTool('converter')
+    window.location.hash = mode === 'audio-text' ? 'midia-texto' : 'conversores'
   }
 
   function resetResult() {
@@ -303,38 +310,38 @@ function App() {
   return (
     <main className="app-shell">
       <nav className="topbar" aria-label="Navegação principal">
-        <a className="brand" href="#top" aria-label="Media Tools — início">
+        <a className="brand" href="#conversores" aria-label="Media Tools — início">
           <strong>MEDIA</strong><span>TOOLS</span>
         </a>
         <div className="tool-switch" aria-label="Ferramentas do portal">
-          <button type="button" className={activeTool === 'converter' ? 'active' : ''} onClick={() => changeTool('converter')}>Conversor</button>
-          <button type="button" className={activeTool === 'transcriber' ? 'active' : ''} onClick={() => changeTool('transcriber')}>Áudio → Texto</button>
-          <button type="button" className={activeTool === 'lead-intel' ? 'active' : ''} onClick={() => changeTool('lead-intel')}>Lead Intel</button>
+          <button type="button" className={activeTool === 'converter' ? 'active' : ''} onClick={() => changeTool('converter')}>Conversores</button>
+          <button type="button" className={activeTool === 'company-analysis' ? 'active' : ''} onClick={() => changeTool('company-analysis')}>Análise de empresas</button>
         </div>
-        <div className="privacy-note"><LockKeyhole size={15} /> {activeTool === 'lead-intel' ? 'Pesquisa empresarial auditada' : activeTool === 'transcriber' ? 'Transcrição privada na VPS' : serverMode ? 'Processamento na VPS' : 'Processamento privado'}</div>
+        <div className="privacy-note"><LockKeyhole size={15} /> {activeTool === 'company-analysis' ? 'Pesquisa pública auditada' : serverMode ? 'Processamento privado na VPS' : 'Processamento privado'}</div>
       </nav>
 
       {activeTool === 'converter' ? <>
-      <section className={`hero ${file ? 'hero-compact' : ''}`} id="top">
-        <div className="hero-copy">
-          <div className="eyebrow"><span /> Conversão inteligente de mídia</div>
-          <h1>Vídeo em áudio.<br /><em>Sem complicação.</em></h1>
-          <p>{serverMode
-            ? 'Envie vídeos grandes, escolha o formato e deixe a VPS fazer o trabalho pesado com FFmpeg nativo.'
-            : 'Extraia o som dos seus vídeos em poucos cliques. Escolha o formato, ajuste a qualidade e baixe — tudo direto no navegador.'}</p>
-        </div>
-        {!file && (
-          <div className="hero-proof" aria-label="Benefícios">
-            <div><strong>4</strong><span>formatos de áudio</span></div>
-            <div><strong>{serverMode ? `${serverMaxUploadGb} GB` : '100%'}</strong><span>{serverMode ? 'limite configurável' : 'direto no navegador'}</span></div>
-            <div className="proof-wide"><ShieldCheck size={19} /><span>{serverMode ? `Arquivos removidos automaticamente após ${serverRetentionHours} horas` : 'Seu arquivo não é enviado para servidores'}</span></div>
-          </div>
-        )}
+      <section className="suite-intro" id="conversores">
+        <div className="eyebrow"><span /> Central de conversão</div>
+        <h1>Transforme sua mídia<br /><em>em poucos passos.</em></h1>
+        <p>Escolha o que deseja fazer, envie o arquivo e acompanhe tudo em uma única tela.</p>
       </section>
 
-      <section className={`converter ${file ? 'has-file' : ''}`} aria-label="Conversor de vídeo para áudio">
+      <section className={`converter-hub ${file && conversionMode === 'video-audio' ? 'has-file' : ''}`} aria-label="Central de conversão">
+        <header className="hub-header">
+          <div>
+            <strong>O que você quer fazer?</strong>
+            <span>Troque de ferramenta sem sair desta tela</span>
+          </div>
+          <div className="conversion-switch" role="tablist" aria-label="Tipo de conversão">
+            <button type="button" role="tab" aria-selected={conversionMode === 'video-audio'} className={conversionMode === 'video-audio' ? 'active' : ''} onClick={() => changeConversionMode('video-audio')}><FileVideo2 size={17} /> Vídeo para áudio</button>
+            <button type="button" role="tab" aria-selected={conversionMode === 'audio-text'} className={conversionMode === 'audio-text' ? 'active' : ''} onClick={() => changeConversionMode('audio-text')}><AudioWaveform size={17} /> Áudio ou vídeo → texto</button>
+          </div>
+        </header>
+
+        {conversionMode === 'video-audio' ? <div className="converter-flow" role="tabpanel">
         <div className="converter-heading">
-          <div><span className="heading-index">01</span><div><strong>Conversor de mídia</strong><small>Envie um arquivo para começar</small></div></div>
+          <div><span className="heading-index">01</span><div><strong>Selecione o vídeo</strong><small>Depois você escolhe o formato e a qualidade</small></div></div>
           <span className="online-status"><i /> {serverMode ? 'VPS disponível' : 'Pronto para usar'}</span>
         </div>
         <input
@@ -459,9 +466,10 @@ function App() {
             <div>{formats.map((option) => <span className="format-pill" key={option.value}>{option.label}</span>)}</div>
           </div>
         )}
+        </div> : <Transcriber />}
       </section>
 
-      </> : activeTool === 'transcriber' ? <Transcriber /> : <LeadIntel />}
+      </> : <LeadIntel />}
 
       <footer><strong className="footer-brand">MEDIA <span>TOOLS</span></strong><span>Feito para simplificar o seu trabalho.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
     </main>
