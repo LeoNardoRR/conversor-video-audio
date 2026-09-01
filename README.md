@@ -1,8 +1,8 @@
-# Media Tools — Conversor de vídeo para áudio
+# Media Tools — Mídia e inteligência comercial
 
 Ferramenta que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
 
-O mesmo portal também inclui o **Lead Intel**, uma pesquisa empresarial com salvaguardas de privacidade e fontes rastreáveis.
+O mesmo portal também inclui **Áudio para Texto**, com Whisper local na VPS, e o **Lead Intel**, uma pesquisa empresarial com salvaguardas de privacidade e fontes rastreáveis.
 
 ## Rodar no computador
 
@@ -45,8 +45,22 @@ O projeto inclui uma implantação Docker separada para processar vídeos grande
 - remoção automática de arquivos;
 - frontend e API na mesma origem, servidos pelo Caddy;
 - proteção inicial por usuário e senha.
+- transcrição local de áudio com `whisper.cpp`, sem enviar gravações a APIs externas.
 
 Veja o roteiro completo em [`DEPLOY_VPS.md`](./DEPLOY_VPS.md).
+
+## Áudio para texto
+
+Abra **Áudio → Texto** na navegação superior ou use `#audio-texto` no endereço.
+
+- aceita MP3, WAV, M4A, AAC, OGG, FLAC, OPUS, WMA e áudio WebM;
+- detecta o idioma automaticamente ou prioriza português, inglês e espanhol;
+- permite revisar, editar, copiar e baixar a transcrição em TXT;
+- processa uma tarefa pesada por vez para proteger a VPS;
+- remove o áudio e o texto conforme `RETENTION_HOURS`;
+- limita a duração por `MAX_TRANSCRIPTION_HOURS`, com padrão de 6 horas.
+
+A transcrição automática pode errar nomes próprios, números e termos técnicos. Revise o texto antes de usar em documentação, CRM ou decisões.
 
 ## Lead Intel
 

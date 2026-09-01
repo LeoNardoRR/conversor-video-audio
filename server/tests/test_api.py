@@ -16,6 +16,7 @@ class ConverterApiTest(unittest.TestCase):
         os.environ["AUDIT_DIR"] = str(Path(self.temporary_directory.name) / "audit")
         os.environ["MAX_UPLOAD_GB"] = "1"
         os.environ["MIN_FREE_GB"] = "0"
+        os.environ["MAX_TRANSCRIPTION_HOURS"] = "6"
         os.environ.pop("BRAVE_SEARCH_API_KEY", None)
         from app import main
 
@@ -81,6 +82,62 @@ class ConverterApiTest(unittest.TestCase):
             download = client.get(payload["download_url"])
             self.assertEqual(download.status_code, 200)
             self.assertEqual(download.content, b"audio-result")
+
+    def test_audio_transcription_job_and_txt_download(self) -> None:
+        async def fake_transcription(job_id: str) -> None:
+            await asyncio.sleep(0)
+            job = self.main.jobs[job_id]
+            output_path = Path(job["output_path"])
+            text = "Olá, esta é uma transcrição de teste."
+            output_path.write_text(text + "\n", encoding="utf-8")
+            Path(job["input_path"]).unlink(missing_ok=True)
+            job.update(
+                status="ready",
+                stage="complete",
+                progress=100,
+                output_size=output_path.stat().st_size,
+                character_count=len(text),
+                detected_language="pt",
+                updated_at=self.main.now(),
+            )
+            self.main.persist(job)
+
+        with (
+            patch.object(self.main, "transcribe_job", fake_transcription),
+            TestClient(self.main.app) as client,
+        ):
+            created = client.post(
+                "/api/transcriptions?language=auto",
+                content=b"small-audio-payload",
+                headers={"X-Filename": "reuniao.mp3", "Content-Type": "audio/mpeg"},
+            )
+            self.assertEqual(created.status_code, 202)
+            job_id = created.json()["id"]
+
+            for _ in range(20):
+                job = client.get(f"/api/transcriptions/{job_id}")
+                if job.json()["status"] == "ready":
+                    break
+                asyncio.run(asyncio.sleep(0.01))
+
+            payload = job.json()
+            self.assertEqual(payload["status"], "ready")
+            self.assertEqual(payload["detected_language"], "pt")
+            self.assertIn("transcrição de teste", payload["text"])
+            self.assertEqual(payload["output_name"], "reuniao-transcricao.txt")
+
+            download = client.get(payload["download_url"])
+            self.assertEqual(download.status_code, 200)
+            self.assertIn("transcrição de teste", download.text)
+
+    def test_transcription_rejects_invalid_audio_extension(self) -> None:
+        with TestClient(self.main.app) as client:
+            response = client.post(
+                "/api/transcriptions?language=pt",
+                content=b"not-audio",
+                headers={"X-Filename": "anotacoes.txt"},
+            )
+        self.assertEqual(response.status_code, 400)
 
     def test_lead_research_requires_authorization_and_blocks_personal_lookup(
         self,

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import './App.css'
 import LeadIntel from './LeadIntel'
+import Transcriber from './Transcriber'
 
 type AudioFormat = 'mp3' | 'wav' | 'm4a' | 'ogg'
 type AppStatus = 'idle' | 'ready' | 'uploading' | 'loading' | 'converting' | 'success' | 'error'
@@ -31,7 +32,7 @@ type ServerJob = {
   output_size?: number
   download_url?: string
 }
-type ActiveTool = 'converter' | 'lead-intel'
+type ActiveTool = 'converter' | 'transcriber' | 'lead-intel'
 
 const serverMode = import.meta.env.VITE_CONVERSION_MODE === 'server'
 const serverMaxUploadGb = import.meta.env.VITE_MAX_UPLOAD_GB || '12'
@@ -52,6 +53,12 @@ const bitrateOptions = [
 ]
 
 const acceptedExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'mpeg', 'mpg']
+
+function toolFromHash(): ActiveTool {
+  if (window.location.hash === '#lead-intel') return 'lead-intel'
+  if (window.location.hash === '#audio-texto') return 'transcriber'
+  return 'converter'
+}
 
 function formatBytes(bytes: number) {
   if (!bytes) return '0 B'
@@ -85,9 +92,7 @@ function App() {
   const [error, setError] = useState('')
   const [result, setResult] = useState<ConversionResult | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [activeTool, setActiveTool] = useState<ActiveTool>(() =>
-    window.location.hash === '#lead-intel' ? 'lead-intel' : 'converter',
-  )
+  const [activeTool, setActiveTool] = useState<ActiveTool>(toolFromHash)
 
   const busy = status === 'uploading' || status === 'loading' || status === 'converting'
   const selectedBitrate = useMemo(
@@ -110,15 +115,17 @@ function App() {
   useEffect(() => () => uploadRef.current?.abort(), [])
 
   useEffect(() => {
-    const onHashChange = () => setActiveTool(
-      window.location.hash === '#lead-intel' ? 'lead-intel' : 'converter',
-    )
+    const onHashChange = () => setActiveTool(toolFromHash())
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
   function changeTool(tool: ActiveTool) {
-    window.location.hash = tool === 'lead-intel' ? 'lead-intel' : 'top'
+    window.location.hash = tool === 'lead-intel'
+      ? 'lead-intel'
+      : tool === 'transcriber'
+        ? 'audio-texto'
+        : 'top'
     setActiveTool(tool)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -301,9 +308,10 @@ function App() {
         </a>
         <div className="tool-switch" aria-label="Ferramentas do portal">
           <button type="button" className={activeTool === 'converter' ? 'active' : ''} onClick={() => changeTool('converter')}>Conversor</button>
+          <button type="button" className={activeTool === 'transcriber' ? 'active' : ''} onClick={() => changeTool('transcriber')}>Áudio → Texto</button>
           <button type="button" className={activeTool === 'lead-intel' ? 'active' : ''} onClick={() => changeTool('lead-intel')}>Lead Intel</button>
         </div>
-        <div className="privacy-note"><LockKeyhole size={15} /> {activeTool === 'lead-intel' ? 'Pesquisa empresarial auditada' : serverMode ? 'Processamento na VPS' : 'Processamento privado'}</div>
+        <div className="privacy-note"><LockKeyhole size={15} /> {activeTool === 'lead-intel' ? 'Pesquisa empresarial auditada' : activeTool === 'transcriber' ? 'Transcrição privada na VPS' : serverMode ? 'Processamento na VPS' : 'Processamento privado'}</div>
       </nav>
 
       {activeTool === 'converter' ? <>
@@ -453,7 +461,7 @@ function App() {
         )}
       </section>
 
-      </> : <LeadIntel />}
+      </> : activeTool === 'transcriber' ? <Transcriber /> : <LeadIntel />}
 
       <footer><strong className="footer-brand">MEDIA <span>TOOLS</span></strong><span>Feito para simplificar o seu trabalho.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
     </main>

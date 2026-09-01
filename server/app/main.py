@@ -19,6 +19,7 @@ from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, build_opener, urlopen
 from urllib.request import Request as UrlRequest
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
@@ -31,8 +32,24 @@ MAX_CONCURRENT_JOBS = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "1")))
 AUDIT_DIR = Path(os.getenv("AUDIT_DIR", str(DATA_DIR.parent / "audit")))
 BRAVE_SEARCH_API_KEY = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
 RESEARCH_RATE_LIMIT = max(1, int(os.getenv("RESEARCH_RATE_LIMIT", "30")))
+WHISPER_URL = os.getenv("WHISPER_URL", "http://transcriber:8080").rstrip("/")
+MAX_TRANSCRIPTION_SECONDS = int(
+    float(os.getenv("MAX_TRANSCRIPTION_HOURS", "6")) * 3600
+)
 
 ALLOWED_EXTENSIONS = {"mp4", "mov", "avi", "mkv", "webm", "m4v", "mpeg", "mpg"}
+ALLOWED_AUDIO_EXTENSIONS = {
+    "mp3",
+    "wav",
+    "m4a",
+    "aac",
+    "ogg",
+    "flac",
+    "opus",
+    "wma",
+    "webm",
+}
+ALLOWED_TRANSCRIPTION_LANGUAGES = {"auto", "pt", "en", "es"}
 ALLOWED_BITRATES = {128, 192, 256, 320}
 FORMAT_CONFIG = {
     "mp3": {"args": ["-c:a", "libmp3lame"], "mime": "audio/mpeg"},
@@ -42,7 +59,7 @@ FORMAT_CONFIG = {
 }
 
 jobs: dict[str, dict[str, Any]] = {}
-conversion_slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+processing_slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 background_tasks: set[asyncio.Task[Any]] = set()
 research_requests: dict[str, list[int]] = {}
 
@@ -433,6 +450,34 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def public_transcription_job(job: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "id": job["id"],
+        "status": job["status"],
+        "progress": job.get("progress", 0),
+        "stage": job.get("stage", "queued"),
+        "language": job["language"],
+        "detected_language": job.get("detected_language"),
+        "original_name": job["original_name"],
+        "input_size": job.get("input_size", 0),
+        "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+    }
+    if job.get("error"):
+        payload["error"] = job["error"]
+    if job["status"] == "ready":
+        output_path = Path(job["output_path"])
+        payload.update(
+            output_name=job["output_name"],
+            output_size=job["output_size"],
+            character_count=job.get("character_count", 0),
+            text=output_path.read_text(encoding="utf-8") if output_path.exists() else "",
+            download_url=f"/api/transcriptions/{job['id']}/download",
+            expires_at=job["updated_at"] + RETENTION_SECONDS,
+        )
+    return payload
+
+
 def persist(job: dict[str, Any]) -> None:
     job_dir = DATA_DIR / job["id"]
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -454,11 +499,10 @@ def load_jobs() -> None:
     for metadata in DATA_DIR.glob("*/job.json"):
         try:
             job = json.loads(metadata.read_text(encoding="utf-8"))
-            if job["status"] in {"uploading", "queued", "converting"}:
+            if job["status"] in {"uploading", "queued", "converting", "transcribing"}:
                 job["status"] = "error"
-                job["error"] = (
-                    "A conversão foi interrompida por uma reinicialização do servidor."
-                )
+                action = "transcrição" if job.get("kind") == "transcription" else "conversão"
+                job["error"] = f"A {action} foi interrompida por uma reinicialização do servidor."
                 job["updated_at"] = now()
                 persist(job)
             jobs[job["id"]] = job
@@ -495,13 +539,13 @@ async def probe_duration(input_path: Path) -> float:
     )
     stdout, _ = await asyncio.wait_for(process.communicate(), timeout=120)
     if process.returncode != 0:
-        raise RuntimeError("Não foi possível ler a duração do vídeo.")
+        raise RuntimeError("Não foi possível ler a duração do arquivo de mídia.")
     return max(float(stdout.decode().strip()), 0.001)
 
 
 async def convert_job(job_id: str) -> None:
     job = jobs[job_id]
-    async with conversion_slots:
+    async with processing_slots:
         input_path = Path(job["input_path"])
         output_path = Path(job["output_path"])
         log_path = input_path.parent / "ffmpeg.log"
@@ -566,6 +610,115 @@ async def convert_job(job_id: str) -> None:
             input_path.unlink(missing_ok=True)
 
 
+async def transcribe_with_whisper(
+    audio_path: Path, language: str
+) -> tuple[str, str | None]:
+    timeout = httpx.Timeout(4 * 3600, connect=15)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        with audio_path.open("rb") as audio_file:
+            response = await client.post(
+                f"{WHISPER_URL}/inference",
+                files={"file": ("audio.wav", audio_file, "audio/wav")},
+                data={
+                    "response_format": "json",
+                    "language": language,
+                    "temperature": "0.0",
+                    "temperature_inc": "0.2",
+                },
+            )
+    response.raise_for_status()
+    payload = response.json()
+    text = str(payload.get("text") or "").replace("\x00", "").strip()[:5_000_000]
+    detected_language = clean_text(
+        payload.get("language") or payload.get("detected_language"), 20
+    )
+    if not text:
+        raise RuntimeError("Nenhuma fala foi identificada nesse áudio.")
+    return text, detected_language or None
+
+
+async def transcribe_job(job_id: str) -> None:
+    job = jobs[job_id]
+    async with processing_slots:
+        input_path = Path(job["input_path"])
+        wav_path = input_path.parent / "prepared.wav"
+        output_path = Path(job["output_path"])
+        log_path = input_path.parent / "transcription.log"
+        try:
+            job.update(status="transcribing", stage="preparing", progress=8, updated_at=now())
+            persist(job)
+            duration = await probe_duration(input_path)
+            if duration > MAX_TRANSCRIPTION_SECONDS:
+                hours = MAX_TRANSCRIPTION_SECONDS / 3600
+                raise RuntimeError(
+                    f"O áudio ultrapassa o limite de {hours:g} horas por transcrição."
+                )
+
+            with log_path.open("wb") as log_file:
+                process = await asyncio.create_subprocess_exec(
+                    "ffmpeg",
+                    "-y",
+                    "-hide_banner",
+                    "-nostdin",
+                    "-i",
+                    str(input_path),
+                    "-vn",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(wav_path),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=log_file,
+                )
+                exit_code = await process.wait()
+            if exit_code != 0 or not wav_path.exists() or wav_path.stat().st_size == 0:
+                raise RuntimeError("Não foi possível preparar esse áudio para transcrição.")
+
+            job.update(stage="recognizing", progress=38, updated_at=now())
+            persist(job)
+            text, detected_language = await transcribe_with_whisper(
+                wav_path, job["language"]
+            )
+            output_path.write_text(text.strip() + "\n", encoding="utf-8")
+            job.update(
+                status="ready",
+                stage="complete",
+                progress=100,
+                detected_language=detected_language,
+                output_size=output_path.stat().st_size,
+                character_count=len(text),
+                updated_at=now(),
+            )
+            persist(job)
+        except httpx.HTTPError as error:
+            output_path.unlink(missing_ok=True)
+            job.update(
+                status="error",
+                stage="error",
+                progress=0,
+                error="O serviço de transcrição está indisponível no momento.",
+                updated_at=now(),
+            )
+            persist(job)
+            log_path.write_text(str(error), encoding="utf-8")
+        except Exception as error:  # noqa: BLE001
+            output_path.unlink(missing_ok=True)
+            job.update(
+                status="error",
+                stage="error",
+                progress=0,
+                error=str(error),
+                updated_at=now(),
+            )
+            persist(job)
+        finally:
+            input_path.unlink(missing_ok=True)
+            wav_path.unlink(missing_ok=True)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     load_jobs()
@@ -590,7 +743,7 @@ async def health() -> dict[str, Any]:
         "status": "ok",
         "free_bytes": disk.free,
         "active_jobs": sum(
-            job["status"] in {"uploading", "queued", "converting"}
+            job["status"] in {"uploading", "queued", "converting", "transcribing"}
             for job in jobs.values()
         ),
         "max_upload_bytes": MAX_UPLOAD_BYTES,
@@ -598,6 +751,11 @@ async def health() -> dict[str, Any]:
             "status": "ok",
             "cnpj_provider": "available",
             "web_search": "available" if BRAVE_SEARCH_API_KEY else "unconfigured",
+        },
+        "transcription": {
+            "status": "ok",
+            "engine": "whisper.cpp",
+            "max_duration_seconds": MAX_TRANSCRIPTION_SECONDS,
         },
     }
 
@@ -865,6 +1023,7 @@ async def create_job(
     output_path = job_dir / f"output.{output_format}"
     job: dict[str, Any] = {
         "id": job_id,
+        "kind": "conversion",
         "status": "uploading",
         "progress": 0,
         "format": output_format,
@@ -913,7 +1072,7 @@ async def create_job(
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str) -> dict[str, Any]:
     job = jobs.get(job_id)
-    if not job:
+    if not job or job.get("kind", "conversion") != "conversion":
         raise HTTPException(404, "Conversão não encontrada ou já removida.")
     return public_job(job)
 
@@ -921,7 +1080,7 @@ async def get_job(job_id: str) -> dict[str, Any]:
 @app.get("/api/jobs/{job_id}/download")
 async def download(job_id: str) -> FileResponse:
     job = jobs.get(job_id)
-    if not job or job["status"] != "ready":
+    if not job or job.get("kind", "conversion") != "conversion" or job["status"] != "ready":
         raise HTTPException(404, "O áudio ainda não está disponível.")
     output_path = Path(job["output_path"])
     if not output_path.exists():
@@ -931,6 +1090,117 @@ async def download(job_id: str) -> FileResponse:
         filename=job["output_name"],
         media_type=FORMAT_CONFIG[job["format"]]["mime"],
     )
+
+
+@app.post("/api/transcriptions", status_code=status.HTTP_202_ACCEPTED)
+async def create_transcription(
+    request: Request,
+    language: str = Query(default="auto"),
+) -> dict[str, Any]:
+    language = language.lower()
+    if language not in ALLOWED_TRANSCRIPTION_LANGUAGES:
+        raise HTTPException(400, "Idioma de transcrição inválido.")
+
+    raw_name = unquote(request.headers.get("x-filename", "audio.mp3"))
+    original_name = safe_name(raw_name)
+    extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+    if extension not in ALLOWED_AUDIO_EXTENSIONS:
+        raise HTTPException(400, "Formato de áudio não permitido.")
+
+    content_length = request.headers.get("content-length")
+    expected_size = int(content_length) if content_length and content_length.isdigit() else 0
+    if expected_size > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "O arquivo ultrapassa o limite configurado no servidor.")
+    transcription_work_bytes = MAX_TRANSCRIPTION_SECONDS * 32_000
+    if shutil.disk_usage(DATA_DIR).free < expected_size + transcription_work_bytes + MIN_FREE_BYTES:
+        raise HTTPException(507, "Não há espaço suficiente na VPS para transcrever este áudio.")
+
+    job_id = uuid.uuid4().hex
+    job_dir = DATA_DIR / job_id
+    job_dir.mkdir(parents=True)
+    input_path = job_dir / f"input.{extension}"
+    output_name = f"{safe_name(original_name.rsplit('.', 1)[0])}-transcricao.txt"
+    output_path = job_dir / "transcription.txt"
+    job: dict[str, Any] = {
+        "id": job_id,
+        "kind": "transcription",
+        "status": "uploading",
+        "stage": "uploading",
+        "progress": 0,
+        "language": language,
+        "original_name": original_name,
+        "output_name": output_name,
+        "input_path": str(input_path),
+        "output_path": str(output_path),
+        "input_size": 0,
+        "created_at": now(),
+        "updated_at": now(),
+    }
+    jobs[job_id] = job
+    persist(job)
+
+    received = 0
+    next_disk_check = 64 * 1024**2
+    try:
+        with input_path.open("wb") as destination:
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, "O arquivo ultrapassa o limite configurado no servidor.")
+                if received >= next_disk_check:
+                    if shutil.disk_usage(DATA_DIR).free < MIN_FREE_BYTES + transcription_work_bytes:
+                        raise HTTPException(507, "O disco da VPS atingiu o limite de segurança.")
+                    next_disk_check += 64 * 1024**2
+                destination.write(chunk)
+        if received == 0:
+            raise HTTPException(400, "O arquivo enviado está vazio.")
+    except Exception:
+        remove_job_files(job_id)
+        raise
+
+    job.update(status="queued", stage="queued", input_size=received, updated_at=now())
+    persist(job)
+    task = asyncio.create_task(transcribe_job(job_id))
+    track(task)
+    return public_transcription_job(job)
+
+
+@app.get("/api/transcriptions/{job_id}")
+async def get_transcription(job_id: str) -> dict[str, Any]:
+    job = jobs.get(job_id)
+    if not job or job.get("kind") != "transcription":
+        raise HTTPException(404, "Transcrição não encontrada ou já removida.")
+    return public_transcription_job(job)
+
+
+@app.get("/api/transcriptions/{job_id}/download")
+async def download_transcription(job_id: str) -> FileResponse:
+    job = jobs.get(job_id)
+    if not job or job.get("kind") != "transcription" or job["status"] != "ready":
+        raise HTTPException(404, "A transcrição ainda não está disponível.")
+    output_path = Path(job["output_path"])
+    if not output_path.exists():
+        raise HTTPException(404, "A transcrição já foi removida.")
+    return FileResponse(
+        output_path,
+        filename=job["output_name"],
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+@app.delete(
+    "/api/transcriptions/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_transcription(job_id: str) -> Response:
+    job = jobs.get(job_id)
+    if not job or job.get("kind") != "transcription":
+        raise HTTPException(404, "Transcrição não encontrada.")
+    if job["status"] in {"uploading", "queued", "transcribing"}:
+        raise HTTPException(409, "A transcrição ainda está em andamento.")
+    remove_job_files(job_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.delete(

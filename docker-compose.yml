@@ -12,6 +12,8 @@ services:
       AUDIT_DIR: /data/audit
       RESEARCH_RATE_LIMIT: ${RESEARCH_RATE_LIMIT:-30}
       BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      WHISPER_URL: http://transcriber:8080
+      MAX_TRANSCRIPTION_HOURS: ${MAX_TRANSCRIPTION_HOURS:-6}
     volumes:
       - converter_data:/data
     healthcheck:
@@ -20,6 +22,21 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  transcriber:
+    image: ghcr.io/ggml-org/whisper.cpp:main
+    restart: unless-stopped
+    working_dir: /app
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        test -f /models/ggml-base.bin || ./models/download-ggml-model.sh base /models
+        exec whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.bin --threads 2
+    volumes:
+      - whisper_models:/models
+    mem_limit: 4g
+    cpus: 2.0
 
   web:
     build:
@@ -46,5 +63,6 @@ services:
 
 volumes:
   converter_data:
+  whisper_models:
   caddy_data:
   caddy_config:
