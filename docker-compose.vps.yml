@@ -42,7 +42,7 @@ services:
           echo "$${EXPECTED_SHA}  $${MODEL}.tmp" | sha1sum -c -
           mv "$${MODEL}.tmp" "$${MODEL}"
         fi
-        exec whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.bin --threads 2 --best-of 1 --no-timestamps
+        exec whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.bin --threads 2 --best-of 1
     volumes:
       - whisper_models:/models
     networks:

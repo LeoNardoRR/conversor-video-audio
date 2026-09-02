@@ -20,7 +20,7 @@ from urllib.request import HTTPRedirectHandler, build_opener, urlopen
 from urllib.request import Request as UrlRequest
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -62,7 +62,10 @@ FORMAT_CONFIG = {
 jobs: dict[str, dict[str, Any]] = {}
 processing_slots = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 background_tasks: set[asyncio.Task[Any]] = set()
+transcription_tasks: dict[str, asyncio.Task[Any]] = {}
 research_requests: dict[str, list[int]] = {}
+TRANSCRIPTION_STATS_PATH = DATA_DIR.parent / "transcription-stats.json"
+DEFAULT_TRANSCRIPTION_FACTOR = 0.32
 
 ALLOWED_RESEARCH_PURPOSES = {
     "Qualificação de lead B2B recebido",
@@ -98,6 +101,15 @@ class LeadResearchRequest(BaseModel):
     purpose: str = Field(min_length=5, max_length=120)
     justification: str = Field(min_length=10, max_length=300)
     authorized: bool
+
+
+class TranscriptionUploadRequest(BaseModel):
+    original_name: str = Field(min_length=1, max_length=180)
+    size: int = Field(gt=0)
+    language: Literal["auto", "pt", "en", "es"] = "auto"
+    speaker_detection: bool = False
+    timestamps: bool = True
+    last_modified: int | None = None
 
 
 class WebsiteParser(HTMLParser):
@@ -428,6 +440,33 @@ def audit_research(record: dict[str, Any]) -> None:
         )
 
 
+def transcription_factor() -> float:
+    try:
+        payload = json.loads(TRANSCRIPTION_STATS_PATH.read_text(encoding="utf-8"))
+        return min(2.0, max(0.05, float(payload.get("factor", DEFAULT_TRANSCRIPTION_FACTOR))))
+    except (OSError, ValueError, TypeError):
+        return DEFAULT_TRANSCRIPTION_FACTOR
+
+
+def update_transcription_factor(duration: float, processing_seconds: float) -> float:
+    if duration < 5 or processing_seconds <= 0:
+        return transcription_factor()
+    current = transcription_factor()
+    measured = min(2.0, max(0.05, processing_seconds / duration))
+    updated = current * 0.75 + measured * 0.25
+    TRANSCRIPTION_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = TRANSCRIPTION_STATS_PATH.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps({"factor": updated, "updated_at": now()}), encoding="utf-8"
+    )
+    temporary.replace(TRANSCRIPTION_STATS_PATH)
+    return updated
+
+
+def estimated_transcription_seconds(duration: float) -> int:
+    return max(5, round(duration * transcription_factor() + 2))
+
+
 def public_job(job: dict[str, Any]) -> dict[str, Any]:
     payload = {
         "id": job["id"],
@@ -461,6 +500,13 @@ def public_transcription_job(job: dict[str, Any]) -> dict[str, Any]:
         "detected_language": job.get("detected_language"),
         "original_name": job["original_name"],
         "input_size": job.get("input_size", 0),
+        "expected_size": job.get("expected_size", 0),
+        "duration_seconds": job.get("duration_seconds"),
+        "estimated_seconds": job.get("estimated_seconds"),
+        "speaker_detection": job.get("speaker_detection", False),
+        "timestamps": job.get("timestamps", True),
+        "segment_count": job.get("segment_count", 0),
+        "speaker_detection_status": job.get("speaker_detection_status"),
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
     }
@@ -468,11 +514,13 @@ def public_transcription_job(job: dict[str, Any]) -> dict[str, Any]:
         payload["error"] = job["error"]
     if job["status"] == "ready":
         output_path = Path(job["output_path"])
+        segments_path = output_path.parent / "segments.json"
         payload.update(
             output_name=job["output_name"],
             output_size=job["output_size"],
             character_count=job.get("character_count", 0),
             text=output_path.read_text(encoding="utf-8") if output_path.exists() else "",
+            segments=json.loads(segments_path.read_text(encoding="utf-8")) if segments_path.exists() else [],
             download_url=f"/api/transcriptions/{job['id']}/download",
             expires_at=job["updated_at"] + RETENTION_SECONDS,
         )
@@ -500,7 +548,7 @@ def load_jobs() -> None:
     for metadata in DATA_DIR.glob("*/job.json"):
         try:
             job = json.loads(metadata.read_text(encoding="utf-8"))
-            if job["status"] in {"uploading", "queued", "converting", "transcribing"}:
+            if job["status"] in {"queued", "converting", "transcribing"}:
                 job["status"] = "error"
                 action = "transcrição" if job.get("kind") == "transcription" else "conversão"
                 job["error"] = f"A {action} foi interrompida por uma reinicialização do servidor."
@@ -516,13 +564,19 @@ async def cleaner() -> None:
         await asyncio.sleep(600)
         cutoff = now() - RETENTION_SECONDS
         for job_id, job in list(jobs.items()):
-            if job["status"] in {"ready", "error"} and job["updated_at"] < cutoff:
+            if job["status"] in {"ready", "error", "cancelled", "uploading"} and job["updated_at"] < cutoff:
                 remove_job_files(job_id)
 
 
 def track(task: asyncio.Task[Any]) -> None:
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
+
+
+def track_transcription(job_id: str, task: asyncio.Task[Any]) -> None:
+    transcription_tasks[job_id] = task
+    track(task)
+    task.add_done_callback(lambda _: transcription_tasks.pop(job_id, None))
 
 
 async def probe_duration(input_path: Path) -> float:
@@ -616,8 +670,8 @@ async def convert_job(job_id: str) -> None:
 
 
 async def transcribe_with_whisper(
-    audio_path: Path, language: str
-) -> tuple[str, str | None]:
+    audio_path: Path, language: str, diarize: bool
+) -> tuple[str, str | None, list[dict[str, Any]]]:
     timeout = httpx.Timeout(4 * 3600, connect=15)
     async with httpx.AsyncClient(timeout=timeout) as client:
         with audio_path.open("rb") as audio_file:
@@ -625,21 +679,71 @@ async def transcribe_with_whisper(
                 f"{WHISPER_URL}/inference",
                 files={"file": ("audio.wav", audio_file, "audio/wav")},
                 data={
-                    "response_format": "json",
+                    "response_format": "verbose_json",
                     "language": language,
                     "temperature": "0.0",
                     "temperature_inc": "0.2",
+                    "diarize": "true" if diarize else "false",
+                    "no_language_probabilities": "true",
                 },
             )
     response.raise_for_status()
     payload = response.json()
-    text = str(payload.get("text") or "").replace("\x00", "").strip()[:5_000_000]
+    raw_segments = payload.get("segments") if isinstance(payload.get("segments"), list) else []
+    segments: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_segments[:50_000]):
+        if not isinstance(item, dict):
+            continue
+        segment_text = str(item.get("text") or "").replace("\x00", "").strip()
+        if not segment_text:
+            continue
+        segment: dict[str, Any] = {
+            "id": int(item.get("id", index)),
+            "start": max(0.0, float(item.get("start", 0) or 0)),
+            "end": max(0.0, float(item.get("end", 0) or 0)),
+            "text": segment_text[:20_000],
+        }
+        if diarize:
+            speaker = str(item.get("speaker") or "?")
+            segment["speaker"] = speaker if speaker in {"0", "1"} else "?"
+        segments.append(segment)
+    text = " ".join(segment["text"] for segment in segments).strip()[:5_000_000]
+    if not text:
+        text = str(payload.get("text") or "").replace("\x00", "").strip()[:5_000_000]
     detected_language = clean_text(
         payload.get("language") or payload.get("detected_language"), 20
     )
     if not text:
         raise RuntimeError("Nenhuma fala foi identificada nesse áudio.")
-    return text, detected_language or None
+    return text, detected_language or None, segments
+
+
+def timestamp_label(seconds: float) -> str:
+    total = max(0, round(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def format_transcription_text(
+    plain_text: str,
+    segments: list[dict[str, Any]],
+    include_timestamps: bool,
+    include_speakers: bool,
+) -> str:
+    if not segments or (not include_timestamps and not include_speakers):
+        return plain_text.strip()
+    lines: list[str] = []
+    for segment in segments:
+        labels: list[str] = []
+        if include_timestamps:
+            labels.append(timestamp_label(float(segment.get("start", 0))))
+        if include_speakers:
+            speaker = segment.get("speaker")
+            labels.append({"0": "Participante 1", "1": "Participante 2"}.get(speaker, "Participante não identificado"))
+        prefix = "[" + " · ".join(labels) + "] " if labels else ""
+        lines.append(prefix + str(segment.get("text", "")).strip())
+    return "\n\n".join(filter(None, lines)).strip()
 
 
 async def transcribe_job(job_id: str) -> None:
@@ -658,6 +762,12 @@ async def transcribe_job(job_id: str) -> None:
                 raise RuntimeError(
                     f"A mídia ultrapassa o limite de {hours:g} horas por transcrição."
                 )
+            job.update(
+                duration_seconds=round(duration, 2),
+                estimated_seconds=estimated_transcription_seconds(duration),
+                updated_at=now(),
+            )
+            persist(job)
 
             with log_path.open("wb") as log_file:
                 process = await asyncio.create_subprocess_exec(
@@ -675,7 +785,7 @@ async def transcribe_job(job_id: str) -> None:
                     "-ar",
                     "16000",
                     "-ac",
-                    "1",
+                    "2" if job.get("speaker_detection") else "1",
                     "-c:a",
                     "pcm_s16le",
                     str(wav_path),
@@ -688,10 +798,25 @@ async def transcribe_job(job_id: str) -> None:
 
             job.update(stage="recognizing", progress=38, updated_at=now())
             persist(job)
-            text, detected_language = await transcribe_with_whisper(
-                wav_path, job["language"]
+            recognition_started = time.monotonic()
+            plain_text, detected_language, segments = await transcribe_with_whisper(
+                wav_path, job["language"], bool(job.get("speaker_detection"))
+            )
+            recognition_seconds = time.monotonic() - recognition_started
+            factor = update_transcription_factor(duration, recognition_seconds)
+            text = format_transcription_text(
+                plain_text,
+                segments,
+                bool(job.get("timestamps", True)),
+                bool(job.get("speaker_detection")),
             )
             output_path.write_text(text.strip() + "\n", encoding="utf-8")
+            (output_path.parent / "segments.json").write_text(
+                json.dumps(segments, ensure_ascii=False), encoding="utf-8"
+            )
+            identified_speakers = {
+                segment.get("speaker") for segment in segments if segment.get("speaker") in {"0", "1"}
+            }
             job.update(
                 status="ready",
                 stage="complete",
@@ -699,9 +824,26 @@ async def transcribe_job(job_id: str) -> None:
                 detected_language=detected_language,
                 output_size=output_path.stat().st_size,
                 character_count=len(text),
+                segment_count=len(segments),
+                processing_seconds=round(recognition_seconds, 2),
+                estimated_seconds=max(5, round(duration * factor + 2)),
+                speaker_detection_status=(
+                    "identified" if len(identified_speakers) >= 2 else "unavailable"
+                ) if job.get("speaker_detection") else None,
                 updated_at=now(),
             )
             persist(job)
+        except asyncio.CancelledError:
+            output_path.unlink(missing_ok=True)
+            job.update(
+                status="cancelled",
+                stage="cancelled",
+                progress=0,
+                error="Transcrição cancelada pelo usuário.",
+                updated_at=now(),
+            )
+            persist(job)
+            raise
         except httpx.HTTPError as error:
             output_path.unlink(missing_ok=True)
             job.update(
@@ -1137,11 +1279,14 @@ async def create_transcription(
         "stage": "uploading",
         "progress": 0,
         "language": language,
+        "speaker_detection": False,
+        "timestamps": True,
         "original_name": original_name,
         "output_name": output_name,
         "input_path": str(input_path),
         "output_path": str(output_path),
         "input_size": 0,
+        "expected_size": expected_size,
         "created_at": now(),
         "updated_at": now(),
     }
@@ -1170,7 +1315,119 @@ async def create_transcription(
     job.update(status="queued", stage="queued", input_size=received, updated_at=now())
     persist(job)
     task = asyncio.create_task(transcribe_job(job_id))
-    track(task)
+    track_transcription(job_id, task)
+    return public_transcription_job(job)
+
+
+@app.post("/api/transcription-uploads", status_code=status.HTTP_201_CREATED)
+async def create_transcription_upload(payload: TranscriptionUploadRequest) -> dict[str, Any]:
+    original_name = safe_name(payload.original_name)
+    extension = original_name.rsplit(".", 1)[-1].lower() if "." in original_name else ""
+    if extension not in ALLOWED_TRANSCRIPTION_EXTENSIONS:
+        raise HTTPException(400, "Formato de áudio ou vídeo não permitido.")
+    if payload.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "O arquivo ultrapassa o limite configurado no servidor.")
+    transcription_work_bytes = MAX_TRANSCRIPTION_SECONDS * 32_000 * (2 if payload.speaker_detection else 1)
+    if shutil.disk_usage(DATA_DIR).free < payload.size + transcription_work_bytes + MIN_FREE_BYTES:
+        raise HTTPException(507, "Não há espaço suficiente na VPS para transcrever esta mídia.")
+
+    job_id = uuid.uuid4().hex
+    job_dir = DATA_DIR / job_id
+    job_dir.mkdir(parents=True)
+    input_path = job_dir / f"input.{extension}"
+    output_name = f"{safe_name(original_name.rsplit('.', 1)[0])}-transcricao.txt"
+    job: dict[str, Any] = {
+        "id": job_id,
+        "kind": "transcription",
+        "status": "uploading",
+        "stage": "uploading",
+        "progress": 0,
+        "language": payload.language,
+        "speaker_detection": payload.speaker_detection,
+        "timestamps": payload.timestamps,
+        "original_name": original_name,
+        "output_name": output_name,
+        "input_path": str(input_path),
+        "output_path": str(job_dir / "transcription.txt"),
+        "input_size": 0,
+        "expected_size": payload.size,
+        "last_modified": payload.last_modified,
+        "created_at": now(),
+        "updated_at": now(),
+    }
+    jobs[job_id] = job
+    persist(job)
+    return public_transcription_job(job)
+
+
+@app.patch("/api/transcription-uploads/{job_id}")
+async def append_transcription_upload(
+    job_id: str,
+    request: Request,
+    upload_offset: int = Header(default=0, alias="Upload-Offset"),
+) -> dict[str, Any]:
+    job = jobs.get(job_id)
+    if not job or job.get("kind") != "transcription":
+        raise HTTPException(404, "Upload não encontrado ou expirado.")
+    if job["status"] != "uploading":
+        raise HTTPException(409, "Este upload não aceita mais blocos.")
+    current = int(job.get("input_size", 0))
+    if upload_offset != current:
+        raise HTTPException(409, detail={"message": "Posição do upload divergente.", "expected_offset": current})
+    expected = int(job.get("expected_size", 0))
+    input_path = Path(job["input_path"])
+    received = current
+    with input_path.open("ab") as destination:
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > expected or received > MAX_UPLOAD_BYTES:
+                raise HTTPException(413, "O bloco ultrapassa o tamanho esperado do arquivo.")
+            destination.write(chunk)
+    job.update(
+        input_size=received,
+        progress=min(99, round(received / expected * 100)),
+        updated_at=now(),
+    )
+    persist(job)
+    return public_transcription_job(job)
+
+
+@app.post("/api/transcription-uploads/{job_id}/complete", status_code=status.HTTP_202_ACCEPTED)
+async def complete_transcription_upload(job_id: str) -> dict[str, Any]:
+    job = jobs.get(job_id)
+    if not job or job.get("kind") != "transcription":
+        raise HTTPException(404, "Upload não encontrado ou expirado.")
+    if job["status"] != "uploading":
+        return public_transcription_job(job)
+    if int(job.get("input_size", 0)) != int(job.get("expected_size", 0)):
+        raise HTTPException(409, "O arquivo ainda não foi enviado por completo.")
+    job.update(status="queued", stage="queued", progress=100, updated_at=now())
+    persist(job)
+    task = asyncio.create_task(transcribe_job(job_id))
+    track_transcription(job_id, task)
+    return public_transcription_job(job)
+
+
+@app.post("/api/transcriptions/{job_id}/cancel")
+async def cancel_transcription(job_id: str) -> dict[str, Any]:
+    job = jobs.get(job_id)
+    if not job or job.get("kind") != "transcription":
+        raise HTTPException(404, "Transcrição não encontrada.")
+    if job["status"] in {"ready", "error", "cancelled"}:
+        return public_transcription_job(job)
+    task = transcription_tasks.get(job_id)
+    if task:
+        task.cancel()
+    else:
+        Path(job["input_path"]).unlink(missing_ok=True)
+        job.update(
+            status="cancelled",
+            stage="cancelled",
+            progress=0,
+            error="Transcrição cancelada pelo usuário.",
+            updated_at=now(),
+        )
+        persist(job)
     return public_transcription_job(job)
 
 
