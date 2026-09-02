@@ -291,6 +291,7 @@ export default function Transcriber() {
     const controller = new AbortController()
     uploadController.current = controller
     while (offset < audio.size) {
+      const offsetBeforeChunk = offset
       const chunk = audio.slice(offset, Math.min(offset + CHUNK_SIZE, audio.size))
       let response: Response | undefined
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -306,6 +307,7 @@ export default function Transcriber() {
         }
         await new Promise((resolve) => window.setTimeout(resolve, 700 * (attempt + 1)))
       }
+      if (!response?.ok && offset > offsetBeforeChunk) continue
       if (!response?.ok) throw new Error('O upload foi pausado. Clique novamente em transcrever para continuar do ponto salvo.')
       job = await response.json() as TranscriptionJob
       offset = job.input_size
