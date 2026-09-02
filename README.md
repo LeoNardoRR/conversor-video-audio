@@ -45,7 +45,7 @@ O projeto inclui uma implantação Docker separada para processar vídeos grande
 - remoção automática de arquivos;
 - frontend e API na mesma origem, servidos pelo Caddy;
 - proteção inicial por usuário e senha.
-- transcrição local de áudio e vídeo com `whisper.cpp`, sem enviar gravações a APIs externas.
+- transcrição local de áudio e vídeo com `whisper.cpp`, compilado com as otimizações nativas da CPU da VPS e sem enviar gravações a APIs externas.
 
 Veja o roteiro completo em [`DEPLOY_VPS.md`](./DEPLOY_VPS.md).
 

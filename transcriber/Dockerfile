@@ -10,7 +10,8 @@ RUN git clone --branch "${WHISPER_CPP_VERSION}" --depth 1 https://github.com/ggm
     && cmake -S /src -B /src/build \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
-        -DGGML_NATIVE=OFF \
+        -DGGML_NATIVE=ON \
+        -DGGML_OPENMP=ON \
         -DWHISPER_BUILD_TESTS=OFF \
     && cmake --build /src/build --config Release --target whisper-server -j2
 
