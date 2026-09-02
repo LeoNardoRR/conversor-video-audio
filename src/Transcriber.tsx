@@ -4,6 +4,7 @@ import {
   AudioLines,
   Check,
   Clipboard,
+  Clock3,
   Download,
   FileAudio2,
   FileVideo2,
@@ -58,6 +59,22 @@ function formatDuration(seconds: number) {
     : `${minutes}:${rest.toString().padStart(2, '0')}`
 }
 
+function formatEstimatedTime(seconds: number) {
+  if (seconds < 60) return `${Math.max(5, Math.round(seconds / 5) * 5)} s`
+  const minutes = Math.max(1, Math.round(seconds / 60))
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours} h ${rest} min` : `${hours} h`
+}
+
+function transcriptionEstimate(duration: number) {
+  if (!duration) return 'Disponível após identificarmos a duração'
+  const minimum = Math.max(5, duration * 0.25)
+  const maximum = Math.max(10, duration * 0.45)
+  return `${formatEstimatedTime(minimum)}–${formatEstimatedTime(maximum)}`
+}
+
 const stageLabels: Record<TranscriptionJob['stage'], string> = {
   uploading: 'Enviando o arquivo para a VPS',
   queued: 'Aguardando a fila de processamento',
@@ -89,6 +106,7 @@ export default function Transcriber() {
   const selectedLanguage = languageOptions.find((item) => item.value === language)!
   const selectedExtension = file?.name.split('.').pop()?.toLowerCase() || ''
   const isVideo = Boolean(file && (file.type.startsWith('video/') || videoExtensions.includes(selectedExtension)))
+  const estimatedTime = transcriptionEstimate(duration)
 
   useEffect(() => () => {
     uploadRef.current?.abort()
@@ -267,8 +285,9 @@ export default function Transcriber() {
                 <div className="step-heading"><span>02</span><div><strong>Idioma da gravação</strong><small>Ajuda a IA a reconhecer melhor</small></div></div>
                 <label className="language-select"><Languages size={18} /><span><strong>{selectedLanguage.label}</strong><small>{selectedLanguage.hint}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)} disabled={busy}>{languageOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               </div>
+              <div className="transcription-estimate"><Clock3 size={17} /><span><small>Tempo médio estimado</small><strong>{estimatedTime}</strong></span></div>
               {status !== 'success' && <button className="convert-button" type="button" onClick={transcribe} disabled={busy}><Sparkles size={17} />{busy ? 'Transcrevendo…' : isVideo ? 'Transcrever vídeo' : 'Transcrever áudio'}</button>}
-              {busy && <div className="progress-card"><div><span>{stageLabels[stage]}</span><strong>{status === 'uploading' ? `${progress}%` : 'Em andamento'}</strong></div><div className={`progress-track ${status === 'transcribing' ? 'is-indeterminate' : ''}`}><i style={status === 'uploading' ? { width: `${progress}%` } : undefined} /></div><small>{status === 'uploading' ? 'Progresso real do envio do arquivo.' : 'O reconhecimento não informa uma porcentagem real. Esta animação indica que a VPS continua processando.'}</small></div>}
+              {busy && <div className="progress-card"><div><span>{stageLabels[stage]}</span><strong>{status === 'uploading' ? `${progress}%` : 'Em andamento'}</strong></div><div className={`progress-track ${status === 'transcribing' ? 'is-indeterminate' : ''}`}><i style={status === 'uploading' ? { width: `${progress}%` } : undefined} /></div><small>{status === 'uploading' ? 'Progresso real do envio do arquivo.' : `Estimativa média: ${estimatedTime}. Pode variar conforme a fila, o ruído e a quantidade de fala.`}</small></div>}
               {error && <div className="error-message"><AlertCircle size={17} /><span>{error}</span></div>}
             </aside>
 
