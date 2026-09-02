@@ -113,6 +113,7 @@
 .progress-card strong { color: var(--accent); }
 .progress-track { height: 5px; margin: 9px 0 8px; overflow: hidden; background: #ffe1cc; border-radius: 999px; }
 .progress-track i { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .25s ease; }
+.progress-track.is-indeterminate i { width: 38%; animation: progress-indeterminate 1.2s ease-in-out infinite; }
 .progress-card small { color: #9d826f; font-size: 8px; }
 .error-message { display: flex; align-items: flex-start; gap: 9px; margin: 17px 0 0; padding: 12px; color: #9b3e3e; background: #fff4f3; border: 1px solid #f0ceca; border-radius: 8px; font-size: 9px; line-height: 1.45; }
 .error-message svg { flex: 0 0 auto; }
@@ -184,6 +185,12 @@ footer small i { width: 3px; height: 3px; border-radius: 50%; background: var(--
 .transcript-heading button:hover { color: var(--accent); border-color: var(--accent); }
 .transcript-panel textarea { flex: 1; min-height: 410px; resize: vertical; padding: 18px; border: 1px solid var(--line); border-radius: 10px; outline: 0; color: #383838; background: white; font: inherit; font-size: 12px; line-height: 1.75; }
 .transcript-panel textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,0,.07); }
+.transcript-download { display: grid; grid-template-columns: minmax(0,1fr) 150px auto; gap: 9px; align-items: end; padding: 12px 0 2px; }
+.transcript-download label { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: #777; font-size: 8px; font-weight: 700; }
+.transcript-download input, .transcript-download select { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; outline: 0; color: var(--ink); background: white; font: inherit; font-size: 10px; }
+.transcript-download input:focus, .transcript-download select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,0,.07); }
+.transcript-download button { min-height: 38px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 13px; border: 0; border-radius: 7px; color: white; background: var(--accent); font: inherit; font-size: 9px; font-weight: 750; cursor: pointer; }
+.transcript-download button:hover { filter: brightness(.94); transform: translateY(-1px); }
 .transcript-footer { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 14px; color: #999; font-size: 7px; }
 .transcript-footer button { display: flex; align-items: center; gap: 5px; border: 0; color: #777; background: transparent; font: inherit; font-size: 8px; font-weight: 700; cursor: pointer; }
 .transcript-footer button:hover { color: var(--accent); }
@@ -344,6 +351,7 @@ footer small i { width: 3px; height: 3px; border-radius: 50%; background: var(--
 .intel-field strong, .intel-contact-grid strong, .intel-web-list strong, .intel-provider-list strong { font-size: 10px; }
 .intel-address, .intel-contact-grid small, .intel-web-list span, .intel-provider-list span, .intel-sources > a span, .intel-sources > p { font-size: 9px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes progress-indeterminate { from { transform: translateX(-110%); } to { transform: translateX(265%); } }
 @media (max-width: 900px) {
   .hero { grid-template-columns: 1fr; gap: 38px; }
   .hero-proof { max-width: 460px; }
@@ -430,6 +438,8 @@ footer small i { width: 3px; height: 3px; border-radius: 50%; background: var(--
   .transcript-heading > div:last-child { width: 100%; }
   .transcript-heading button { flex: 1; justify-content: center; }
   .transcript-panel textarea { min-height: 380px; }
+  .transcript-download { grid-template-columns: 1fr; }
+  .transcript-download button { width: 100%; }
   .transcript-footer { align-items: flex-start; flex-direction: column; padding: 10px 2px 2px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }

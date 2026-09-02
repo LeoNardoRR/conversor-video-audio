@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 
 type TranscriptionStatus = 'idle' | 'ready' | 'uploading' | 'transcribing' | 'success' | 'error'
+type DownloadFormat = 'txt' | 'doc' | 'md'
 type TranscriptionJob = {
   id: string
   status: 'uploading' | 'queued' | 'transcribing' | 'ready' | 'error'
@@ -80,7 +81,8 @@ export default function Transcriber() {
   const [dragging, setDragging] = useState(false)
   const [jobId, setJobId] = useState('')
   const [text, setText] = useState('')
-  const [outputName, setOutputName] = useState('transcricao.txt')
+  const [downloadName, setDownloadName] = useState('transcricao')
+  const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>('txt')
   const [copied, setCopied] = useState(false)
 
   const busy = status === 'uploading' || status === 'transcribing'
@@ -113,6 +115,7 @@ export default function Transcriber() {
     setAudioUrl(URL.createObjectURL(nextFile))
     setDuration(0)
     setText('')
+    setDownloadName(`${nextFile.name.replace(/\.[^.]+$/, '')}-transcricao`)
     setJobId('')
     setProgress(0)
     setError('')
@@ -127,6 +130,7 @@ export default function Transcriber() {
     setAudioUrl('')
     setDuration(0)
     setText('')
+    setDownloadName('transcricao')
     setJobId('')
     setProgress(0)
     setError('')
@@ -143,7 +147,7 @@ export default function Transcriber() {
       request.setRequestHeader('Content-Type', audio.type || 'application/octet-stream')
       request.setRequestHeader('X-Filename', encodeURIComponent(audio.name))
       request.upload.onprogress = (event) => {
-        if (event.lengthComputable) setProgress(Math.round(event.loaded / event.total * 30))
+        if (event.lengthComputable) setProgress(Math.round(event.loaded / event.total * 100))
       }
       request.onload = () => {
         uploadRef.current = null
@@ -170,9 +174,6 @@ export default function Transcriber() {
       if (!response.ok) throw new Error('Não foi possível consultar o andamento da transcrição.')
       const job = await response.json() as TranscriptionJob
       setStage(job.stage)
-      setProgress((current) => job.stage === 'recognizing'
-        ? Math.min(92, Math.max(current + 1, 42))
-        : Math.max(current, job.progress))
       if (job.status === 'ready') return job
       if (job.status === 'error') throw new Error(job.error || 'A transcrição falhou na VPS.')
       await new Promise((resolve) => window.setTimeout(resolve, 1600))
@@ -184,17 +185,16 @@ export default function Transcriber() {
     setError('')
     setText('')
     setStage('uploading')
-    setProgress(1)
+    setProgress(0)
     setStatus('uploading')
     try {
       const queued = await uploadAudio(file)
       setJobId(queued.id)
       setStage(queued.stage)
       setStatus('transcribing')
-      setProgress(32)
       const result = await waitForJob(queued.id)
       setText(result.text?.trim() || '')
-      setOutputName(result.output_name || 'transcricao.txt')
+      setDownloadName((result.output_name || 'transcricao.txt').replace(/\.[^.]+$/, ''))
       setProgress(100)
       setStage('complete')
       setStatus('success')
@@ -213,11 +213,23 @@ export default function Transcriber() {
   }
 
   function downloadText() {
-    const blob = new Blob([text.trim() + '\n'], { type: 'text/plain;charset=utf-8' })
+    const cleanName = (downloadName.trim() || 'transcricao')
+      .replace(/\.(txt|doc|md)$/i, '')
+      .replace(/[\\/:*?"<>|]/g, '-')
+      .slice(0, 120)
+    let content = text.trim() + '\n'
+    let mime = 'text/plain;charset=utf-8'
+    if (downloadFormat === 'md') content = `# Transcrição\n\n${text.trim()}\n`
+    if (downloadFormat === 'doc') {
+      const escaped = text.trim().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+      content = `<!doctype html><html><head><meta charset="utf-8"><title>${cleanName}</title><style>body{font-family:Arial,sans-serif;font-size:12pt;line-height:1.6;margin:2.5cm}</style></head><body>${escaped}</body></html>`
+      mime = 'application/msword;charset=utf-8'
+    }
+    const blob = new Blob(['\ufeff', content], { type: mime })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = outputName
+    anchor.download = `${cleanName}.${downloadFormat}`
     anchor.click()
     URL.revokeObjectURL(url)
   }
@@ -256,14 +268,15 @@ export default function Transcriber() {
                 <label className="language-select"><Languages size={18} /><span><strong>{selectedLanguage.label}</strong><small>{selectedLanguage.hint}</small></span><select value={language} onChange={(event) => setLanguage(event.target.value)} disabled={busy}>{languageOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
               </div>
               {status !== 'success' && <button className="convert-button" type="button" onClick={transcribe} disabled={busy}><Sparkles size={17} />{busy ? 'Transcrevendo…' : isVideo ? 'Transcrever vídeo' : 'Transcrever áudio'}</button>}
-              {busy && <div className="progress-card"><div><span>{stageLabels[stage]}</span><strong>{progress}%</strong></div><div className="progress-track"><i style={{ width: `${progress}%` }} /></div><small>Áudios longos podem levar alguns minutos. Você pode manter esta aba aberta.</small></div>}
+              {busy && <div className="progress-card"><div><span>{stageLabels[stage]}</span><strong>{status === 'uploading' ? `${progress}%` : 'Em andamento'}</strong></div><div className={`progress-track ${status === 'transcribing' ? 'is-indeterminate' : ''}`}><i style={status === 'uploading' ? { width: `${progress}%` } : undefined} /></div><small>{status === 'uploading' ? 'Progresso real do envio do arquivo.' : 'O reconhecimento não informa uma porcentagem real. Esta animação indica que a VPS continua processando.'}</small></div>}
               {error && <div className="error-message"><AlertCircle size={17} /><span>{error}</span></div>}
             </aside>
 
             <div className={`transcript-panel ${status === 'success' ? 'has-transcript' : ''}`}>
               {status === 'success' ? <>
-                <div className="transcript-heading"><div><span className="success-icon"><Check size={19} /></span><div><small>Transcrição concluída</small><strong>{text.length.toLocaleString('pt-BR')} caracteres</strong></div></div><div><button type="button" onClick={copyText}><Clipboard size={15} />{copied ? 'Copiado' : 'Copiar'}</button><button type="button" onClick={downloadText}><Download size={15} />Baixar TXT</button></div></div>
+                <div className="transcript-heading"><div><span className="success-icon"><Check size={19} /></span><div><small>Transcrição concluída</small><strong>{text.length.toLocaleString('pt-BR')} caracteres</strong></div></div><div><button type="button" onClick={copyText}><Clipboard size={15} />{copied ? 'Copiado' : 'Copiar'}</button></div></div>
                 <textarea value={text} onChange={(event) => setText(event.target.value)} aria-label="Texto transcrito" spellCheck />
+                <div className="transcript-download"><label><span>Nome do arquivo</span><input value={downloadName} onChange={(event) => setDownloadName(event.target.value)} placeholder="transcricao" /></label><label><span>Formato</span><select value={downloadFormat} onChange={(event) => setDownloadFormat(event.target.value as DownloadFormat)}><option value="txt">Texto (.txt)</option><option value="doc">Word (.doc)</option><option value="md">Markdown (.md)</option></select></label><button type="button" onClick={downloadText}><Download size={16} />Baixar .{downloadFormat}</button></div>
                 <div className="transcript-footer"><span>Revise nomes próprios, números e termos técnicos antes de usar.</span><button type="button" onClick={clearFile}><RefreshCw size={13} />Nova transcrição</button></div>
               </> : <div className="transcript-empty"><span>{busy ? <LoaderCircle className="spinning" size={32} /> : <AudioLines size={32} />}</span><strong>{busy ? stageLabels[stage] : 'O texto aparecerá aqui'}</strong><p>{busy ? 'A VPS está processando o áudio com o modelo de reconhecimento local.' : 'Depois da transcrição, você poderá corrigir o conteúdo, copiar tudo ou baixar um arquivo TXT.'}</p><div><span><Check size={12} /> Texto editável</span><i /><span><Check size={12} /> Download em TXT</span></div></div>}
             </div>
