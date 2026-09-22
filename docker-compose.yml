@@ -9,6 +9,11 @@ services:
       MIN_FREE_GB: ${MIN_FREE_GB:-5}
       RETENTION_HOURS: ${RETENTION_HOURS:-6}
       MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-1}
+      AUDIT_DIR: /data/audit
+      RESEARCH_RATE_LIMIT: ${RESEARCH_RATE_LIMIT:-30}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      WHISPER_URL: http://transcriber:8080
+      MAX_TRANSCRIPTION_HOURS: ${MAX_TRANSCRIPTION_HOURS:-6}
     volumes:
       - converter_data:/data
     healthcheck:
@@ -17,6 +22,29 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  transcriber:
+    build:
+      context: ./transcriber
+    image: media-tools-transcriber
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        MODEL=/models/ggml-base.bin
+        EXPECTED_SHA=465707469ff3a37a2b9b8d8f89f2f99de7299dac
+        if [ ! -f "$${MODEL}" ] || ! echo "$${EXPECTED_SHA}  $${MODEL}" | sha1sum -c - >/dev/null 2>&1; then
+          rm -f "$${MODEL}" "$${MODEL}.tmp"
+          curl --fail --location --retry 3 --output "$${MODEL}.tmp" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+          echo "$${EXPECTED_SHA}  $${MODEL}.tmp" | sha1sum -c -
+          mv "$${MODEL}.tmp" "$${MODEL}"
+        fi
+        exec whisper-server --host 0.0.0.0 --port 8080 --model /models/ggml-base.bin --threads 2 --best-of 1
+    volumes:
+      - whisper_models:/models
+    mem_limit: 4g
+    cpus: 2.0
 
   web:
     build:
@@ -43,5 +71,6 @@ services:
 
 volumes:
   converter_data:
+  whisper_models:
   caddy_data:
   caddy_config:

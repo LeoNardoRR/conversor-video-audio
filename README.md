@@ -1,6 +1,8 @@
-# Conversor Áudio — Conversor de vídeo para áudio
+# Conversor Áudio — Conversão de mídia e transcrição
 
-Ferramenta que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor nesse modo.
+Ferramenta que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. Nesse modo, o arquivo não é enviado a um servidor.
+
+O mesmo portal também inclui **Áudio ou vídeo → texto**. No site público do GitHub Pages, a transcrição roda no navegador com Whisper Tiny: o modelo é baixado na primeira utilização e o arquivo de mídia permanece no dispositivo. A implantação opcional na VPS usa Whisper local no servidor e acrescenta **Análise de Empresas**.
 
 ## Rodar no computador
 
@@ -43,5 +45,51 @@ O projeto inclui uma implantação Docker separada para processar vídeos grande
 - remoção automática de arquivos;
 - frontend e API na mesma origem, servidos pelo Caddy;
 - proteção inicial por usuário e senha.
+- transcrição local de áudio e vídeo com `whisper.cpp`, compilado com as otimizações nativas da CPU da VPS e sem enviar gravações a APIs externas.
+- upload retomável em blocos, cancelamento, histórico recente no navegador e estimativa adaptativa baseada nas execuções reais;
+- timestamps por trecho, exportação SRT/VTT e separação beta de participantes em gravações estéreo.
 
 Veja o roteiro completo em [`DEPLOY_VPS.md`](./DEPLOY_VPS.md).
+
+## Áudio ou vídeo para texto
+
+Abra **Conversores → Áudio ou vídeo → texto** ou use `#midia-texto` no endereço. O endereço legado `#audio-texto` continua compatível.
+
+- no site público, aceita arquivos de até 250 MB e até 60 minutos; a velocidade depende do navegador e do dispositivo;
+- aceita áudio em MP3, WAV, M4A, AAC, OGG, FLAC, OPUS, WMA e WebM;
+- aceita vídeo em MP4, MOV, AVI, MKV, M4V, MPEG, MPG e WebM, extraindo o áudio automaticamente;
+- detecta o idioma automaticamente ou prioriza português, inglês e espanhol;
+- permite revisar, editar, copiar e baixar a transcrição em TXT;
+- no modo VPS, processa uma tarefa pesada por vez, permite upload retomável e remove arquivos após `RETENTION_HOURS`;
+- no navegador, permite exportar TXT, DOC, Markdown, SRT e VTT, mas não separa participantes.
+
+A transcrição automática pode errar nomes próprios, números e termos técnicos. Revise o texto antes de usar em documentação, CRM ou decisões.
+
+## Análise de Empresas (somente na implantação VPS)
+
+Abra **Análise de empresas** na navegação superior ou use `#analise-empresas` no final do endereço. O endereço legado `#lead-intel` continua compatível.
+
+O MVP permite:
+
+- colar o dado disponível no card do Kommo e deixar a ferramenta identificar automaticamente se é CNPJ, domínio/e-mail corporativo ou nome/contexto;
+- consultar cadastro empresarial por CNPJ via BrasilAPI/Minha Receita;
+- exibir natureza jurídica, capital social, matriz/filial, telefones comerciais, e-mail cadastral e quadro societário quando a fonte retornar esses campos;
+- ler título, descrição e canais empresariais publicados no domínio informado;
+- pesquisar o nome, empresa, cidade ou contexto do lead na web quando `BRAVE_SEARCH_API_KEY` estiver configurada;
+- visualizar a fonte e a data de cada consulta;
+- declarar finalidade e justificativa antes da pesquisa;
+- manter auditoria minimizada: o log grava hashes, finalidade, provedores e contagens, nunca a consulta ou justificativa em texto aberto;
+- bloquear CPF, telefone, e-mail pessoal, dados sensíveis e endereços internos.
+
+O recurso é apoio à pesquisa B2B e não garante conformidade jurídica por si só. A empresa deve definir base legal, aviso de privacidade, retenção, canal do titular, perfis de acesso e revisão periódica com seu responsável por privacidade.
+
+### Pesquisa web opcional
+
+Crie uma chave no painel oficial do Brave Search e configure apenas no backend:
+
+```dotenv
+BRAVE_SEARCH_API_KEY=valor_no_cofre_de_segredos
+RESEARCH_RATE_LIMIT=30
+```
+
+Sem essa chave, CNPJ e domínio continuam disponíveis. A pesquisa ampla por nome mostra que o provedor ainda não foi configurado.

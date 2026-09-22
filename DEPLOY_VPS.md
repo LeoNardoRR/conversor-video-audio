@@ -1,6 +1,6 @@
 # Publicar o conversor na Oracle VPS
 
-Esta implantação hospeda o frontend e uma API de conversão na mesma VPS. O vídeo é recebido em fluxo direto para o disco, processado com FFmpeg nativo e removido automaticamente.
+Esta implantação hospeda frontend, API de conversão e transcrição Whisper na mesma VPS. Os arquivos são recebidos em fluxo direto para o disco, processados localmente e removidos automaticamente.
 
 ## 1. Conferir a VPS
 
@@ -61,15 +61,20 @@ Configure inicialmente:
 
 ```dotenv
 SITE_ADDRESS=:80
-BASIC_AUTH_USER=komanda
+BASIC_AUTH_USER=equipe
 BASIC_AUTH_HASH='COLE_O_HASH_AQUI'
 MAX_UPLOAD_GB=12
 MIN_FREE_GB=5
 RETENTION_HOURS=6
 MAX_CONCURRENT_JOBS=1
+MAX_TRANSCRIPTION_HOURS=6
+RESEARCH_RATE_LIMIT=30
+BRAVE_SEARCH_API_KEY=
 ```
 
 Mantenha aspas simples ao redor do hash.
+
+`BRAVE_SEARCH_API_KEY` é opcional e habilita a pesquisa empresarial por nome. Guarde a chave no `.env` da VPS ou em um cofre de segredos; nunca a coloque em arquivos do frontend, no GitHub ou no NotebookLM.
 
 ## 5. Iniciar
 
@@ -78,10 +83,10 @@ sudo docker compose up -d --build
 sudo docker compose ps
 ```
 
-Confira os registros:
+Na primeira inicialização, a VPS compila o `whisper.cpp` para sua arquitetura e o container `transcriber` baixa e verifica o modelo multilíngue `base`. Confira os registros:
 
 ```bash
-sudo docker compose logs --tail=100 backend web
+sudo docker compose logs --tail=100 backend transcriber web
 ```
 
 Abra no navegador o IP público da VPS. O navegador solicitará o usuário e a senha configurados.
@@ -134,4 +139,6 @@ Parar sem apagar os arquivos temporários:
 sudo docker compose stop
 ```
 
-Os vídeos de entrada são apagados assim que a conversão termina. Áudios prontos e tarefas com erro são removidos após o tempo definido em `RETENTION_HOURS`.
+Vídeos e áudios de entrada são apagados assim que o processamento termina. Resultados prontos e tarefas com erro são removidos após o tempo definido em `RETENTION_HOURS`.
+
+As pesquisas do Lead Intel geram um registro minimizado em `/data/audit/lead-research.jsonl`. O registro contém identificadores aleatórios, hashes e status de provedores, sem salvar a consulta ou justificativa em texto aberto. Defina uma política corporativa de retenção e backup para esse log.

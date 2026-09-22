@@ -4,5 +4,5 @@
 html { scroll-behavior: smooth; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 82% 11%, #d8f3ec 0, transparent 34%), linear-gradient(180deg, #fbfefd 0, #f2f8f7 100%); }
 button, a { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, a:focus-visible, select:focus-visible { outline: 3px solid rgba(8,127,118,.28); outline-offset: 3px; }
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid rgba(8,127,118,.28); outline-offset: 3px; }
 ::selection { color: white; background: var(--accent); }

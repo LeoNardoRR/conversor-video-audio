@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 
 RUN useradd --create-home --uid 10001 converter \
-    && mkdir -p /data/jobs \
+    && mkdir -p /data/jobs /data/audit \
     && chown -R converter:converter /data /app
 
 USER converter
