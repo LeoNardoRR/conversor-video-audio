@@ -277,16 +277,16 @@ function App() {
   return (
     <main className="app-shell">
       <nav className="topbar" aria-label="Navegação principal">
-        <a className="brand" href="#top" aria-label="Komanda F5 — início">
-          <img src="./komanda-f5-logo.svg" alt="Komanda F5" />
+        <a className="brand" href="#top" aria-label="Conversor Áudio — início">
+          <img src="./conversor-audio-logo.svg" alt="Conversor Áudio" />
         </a>
-        <div className="tool-label"><span>F5</span> Tools</div>
+        <div className="tool-label"><span>↗</span> Vídeo para áudio</div>
         <div className="privacy-note"><LockKeyhole size={15} /> {serverMode ? 'Processamento na VPS' : 'Processamento privado'}</div>
       </nav>
 
       <section className={`hero ${file ? 'hero-compact' : ''}`} id="top">
         <div className="hero-copy">
-          <div className="eyebrow"><span /> Uma ferramenta Komanda F5</div>
+          <div className="eyebrow"><span /> Seu áudio, do seu jeito</div>
           <h1>Vídeo em áudio.<br /><em>Sem complicação.</em></h1>
           <p>{serverMode
             ? 'Envie vídeos grandes, escolha o formato e deixe a VPS fazer o trabalho pesado com FFmpeg nativo.'
@@ -430,7 +430,7 @@ function App() {
         )}
       </section>
 
-      <footer><img src="./komanda-f5-logo.svg" alt="Komanda F5" /><span>Feito para simplificar o seu trabalho.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
+      <footer><img src="./conversor-audio-logo.svg" alt="Conversor Áudio" /><span>O som que você precisa, em poucos cliques.</span><small>Rápido <i /> Privado <i /> Sem cadastro</small></footer>
     </main>
   )
 }

@@ -1,6 +1,6 @@
-# Komanda F5 — Conversor de vídeo para áudio
+# Conversor Áudio — Conversor de vídeo para áudio
 
-Ferramenta com identidade visual Komanda F5 que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor.
+Ferramenta que extrai o áudio de vídeos locais diretamente no navegador com `ffmpeg.wasm`. O arquivo não é enviado a um servidor nesse modo.
 
 ## Rodar no computador
 

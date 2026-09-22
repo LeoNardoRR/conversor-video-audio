@@ -215,7 +215,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Komanda F5 Converter API", docs_url=None, redoc_url=None, lifespan=lifespan
+    title="Conversor Áudio API", docs_url=None, redoc_url=None, lifespan=lifespan
 )
 
 

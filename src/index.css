@@ -1,8 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-:root { font-family: Inter, Arial, sans-serif; color: #707070; background: #f8f8f6; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; --ink: #101010; --muted: #6f6f6f; --line: #e4e4e1; --grid: #ecece8; --accent: #ff6b00; --accent-soft: #fff8f3; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+:root { font-family: 'DM Sans', Arial, sans-serif; color: #537078; background: #f3f8f7; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; --ink: #123b44; --muted: #537078; --line: #d8e7e5; --grid: #d9ece9; --accent: #087f76; --accent-soft: #e9f7f4; }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: linear-gradient(180deg, #fff 0, #f8f8f6 100%); }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 82% 11%, #d8f3ec 0, transparent 34%), linear-gradient(180deg, #fbfefd 0, #f2f8f7 100%); }
 button, a { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, a:focus-visible, select:focus-visible { outline: 3px solid rgba(255,107,0,.25); outline-offset: 3px; }
+button:focus-visible, a:focus-visible, select:focus-visible { outline: 3px solid rgba(8,127,118,.28); outline-offset: 3px; }
 ::selection { color: white; background: var(--accent); }
