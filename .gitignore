@@ -26,3 +26,6 @@ __pycache__/
 *.njsproj
 *.sln
 *.sw?
+
+# Separate portfolio repository
+/leonardo-ribeiro-portfolio/
